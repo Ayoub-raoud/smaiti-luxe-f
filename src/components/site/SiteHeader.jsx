@@ -6,7 +6,7 @@ import { useI18n } from '../../lib/i18n';
 import { useSelector } from 'react-redux';
 import { selectCars } from '../../Redux/store';
 import logo from '../../assets/c.png';
-import { getImageUrl } from '../utils/imageUtils';
+import { getImageUrl } from '../../utils/imageUtils';
 
 export default function SiteHeader() {
   const { t, lang, setLang } = useI18n();
