@@ -20,6 +20,7 @@ import {
 import { toast } from "sonner";
 import heroCar from "../assets/hero-car.jpg";
 import { BookingModal } from "../components/BookingModal";
+import { getImageUrl } from '../utils/imageUtils';
 
 // Helper to convert color names to hex
 const getColorHex = (colorName) => {
@@ -176,26 +177,17 @@ export default function Home() {
     setBrandLogoErrors(prev => ({ ...prev, [brand]: true }));
   };
 
-  const getCarImageUrl = (car) => {
-    if (!car) return null;
-    const possibleImageFields = ['image_url', 'image', 'img_url', 'photo', 'picture', 'car_image'];
-    for (const field of possibleImageFields) {
-      if (car[field] && typeof car[field] === 'string' && car[field].trim() !== '') {
-        let imageUrl = car[field];
-        if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
-          return imageUrl;
-        }
-        if (imageUrl.startsWith('/storage/')) {
-          return `https://smaiti-luxe-b-production.up.railway.app${imageUrl}`;
-        }
-        if (!imageUrl.startsWith('/')) {
-          return `https://smaiti-luxe-b-production.up.railway.app/storage/${imageUrl}`;
-        }
-        return `https://smaiti-luxe-b-production.up.railway.app${imageUrl}`;
-      }
+  const getCarImage = (car) => {
+  if (!car) return null;
+  const fields = ['image_url', 'image', 'img_url', 'photo', 'picture', 'car_image'];
+  for (const field of fields) {
+    const val = car[field];
+    if (typeof val === 'string' && val.trim()) {
+      return getImageUrl(val);
     }
-    return null;
-  };
+  }
+  return null;
+};
 
   const handleCarImageError = (carId) => {
     setImageErrors(prev => ({ ...prev, [carId]: true }));
@@ -1131,7 +1123,7 @@ export default function Home() {
                       return (
                         <>
                           <img
-                            src={getCarImageUrl(car) || heroCar}
+                            src={getCarImage(car) || heroCar}
                             alt={`${car.brand} ${car.model}`}
                             onError={(e) => { e.target.src = heroCar; }}
                           />
@@ -1242,7 +1234,7 @@ export default function Home() {
               ) : (
                 <div className="cars-grid">
                   {cars.map((car, i) => {
-                    const carImage = getCarImageUrl(car);
+                    const carImage = getCarImage(car);
                     const hasError = imageErrors[car.id];
                     const isDisponible = car.status === 'disponible';
                     const price = car.price_per_day || car.daily_price || 0;

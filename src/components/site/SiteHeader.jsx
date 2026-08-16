@@ -6,6 +6,7 @@ import { useI18n } from '../../lib/i18n';
 import { useSelector } from 'react-redux';
 import { selectCars } from '../../Redux/store';
 import logo from '../../assets/c.png';
+import { getImageUrl } from '../utils/imageUtils';
 
 export default function SiteHeader() {
   const { t, lang, setLang } = useI18n();
@@ -47,26 +48,17 @@ export default function SiteHeader() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [navigate]);
 
-  const getCarImageUrl = (car) => {
-    if (!car) return null;
-    const possibleImageFields = ['image_url', 'image', 'img_url', 'photo', 'picture', 'car_image'];
-    for (const field of possibleImageFields) {
-      if (car[field] && typeof car[field] === 'string' && car[field].trim() !== '') {
-        let imageUrl = car[field];
-        if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
-          return imageUrl;
-        }
-        if (imageUrl.startsWith('/storage/')) {
-          return `https://smaiti-luxe-b-production.up.railway.app${imageUrl}`;
-        }
-        if (!imageUrl.startsWith('/')) {
-          return `https://smaiti-luxe-b-production.up.railway.app/storage/${imageUrl}`;
-        }
-        return `https://smaiti-luxe-b-production.up.railway.app${imageUrl}`;
-      }
+  const getCarImage = (car) => {
+  if (!car) return null;
+  const fields = ['image_url', 'image', 'img_url', 'photo', 'picture', 'car_image'];
+  for (const field of fields) {
+    const val = car[field];
+    if (typeof val === 'string' && val.trim()) {
+      return getImageUrl(val);
     }
-    return null;
-  };
+  }
+  return null;
+};
 
   useEffect(() => {
     setOpen(false);
@@ -518,7 +510,7 @@ export default function SiteHeader() {
               {suggestions.length > 0 && (
                 <div className="search-dropdown">
                   {suggestions.map((car) => {
-                    const imageUrl = getCarImageUrl(car);
+                    const imageUrl = getCarImage(car);
                     const price = car.price_per_day || car.daily_price || 0;
                     const isAvailable = car.status === 'disponible';
 
@@ -628,7 +620,7 @@ export default function SiteHeader() {
                   {suggestions.length > 0 && (
                     <div style={{ width: '100%', background: '#fff', borderRadius: '0.5rem', marginTop: '0.5rem', border: '1px solid #e8e7e2', maxHeight: '300px', overflowY: 'auto' }}>
                       {suggestions.map((car) => {
-                        const imageUrl = getCarImageUrl(car);
+                        const imageUrl = getCarImage(car);
                         const price = car.price_per_day || car.daily_price || 0;
                         return (
                           <div
