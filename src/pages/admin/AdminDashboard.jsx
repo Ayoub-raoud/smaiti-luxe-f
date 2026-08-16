@@ -49,7 +49,7 @@ const blobToBase64 = (blob) =>
   });
 
 const formatMoney = (val) => `${Number(val || 0).toFixed(2)} DH`;
-const API_URL = "http://localhost:8000/api";
+const API_URL = "https://smaiti-luxe-b-production.up.railway.app/api";
 // Ajouter cette fonction après les imports
 const downloadAndOpenPDF = (doc, filename) => {
   const pdfBlob = doc.output('blob');

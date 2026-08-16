@@ -57,12 +57,12 @@ export default function SiteHeader() {
           return imageUrl;
         }
         if (imageUrl.startsWith('/storage/')) {
-          return `http://localhost:8000${imageUrl}`;
+          return `https://smaiti-luxe-b-production.up.railway.app${imageUrl}`;
         }
         if (!imageUrl.startsWith('/')) {
-          return `http://localhost:8000/storage/${imageUrl}`;
+          return `https://smaiti-luxe-b-production.up.railway.app/storage/${imageUrl}`;
         }
-        return `http://localhost:8000${imageUrl}`;
+        return `https://smaiti-luxe-b-production.up.railway.app${imageUrl}`;
       }
     }
     return null;

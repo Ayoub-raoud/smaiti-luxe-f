@@ -1,4 +1,4 @@
-const API_BASE = 'http://localhost:8000';
+const API_BASE = 'https://smaiti-luxe-b-production.up.railway.app';
 
 /**
  * Builds a fully qualified image URL from any given path.
@@ -17,7 +17,7 @@ export const getImageUrl = (path) => {
   }
 
   // 2. Contains the backend domain but lacks scheme → add https://
-  if (trimmed.includes('http://localhost:8000')) {
+  if (trimmed.includes('https://smaiti-luxe-b-production.up.railway.app')) {
     return `https://${trimmed}`;
   }
 
