@@ -36,7 +36,7 @@ import { toast } from "sonner";
 import html2canvas from "html2canvas";
 
 // Import images
-import checklistImage from "../../assets/checklist.png";
+import checklistImage from "../../assets/Checklist.png";
 import logoImage from "../../assets/logo.png";
 
 // ==================== Helper Functions ====================
