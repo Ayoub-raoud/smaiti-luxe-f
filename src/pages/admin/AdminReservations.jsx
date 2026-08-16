@@ -33,7 +33,7 @@ import {
 } from "lucide-react";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
-import checklistImage from "../../assets/checklist.png";
+import checklistImage from "../../assets/Checklist.png";
 import logoImage from "../../assets/logo.png";
 import agentSignatureImage from "../../assets/cache.png";
 // Mapping of color names (in any language) to their CSS color value
