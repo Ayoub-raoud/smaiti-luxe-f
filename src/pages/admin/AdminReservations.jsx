@@ -28,7 +28,7 @@ import {
   CreditCard as CreditCardIcon, CalendarRange, Fuel, Navigation, Upload,
   AlertTriangle, XCircle, Sparkles, Star, Heart, Award, Gem, Tag, Home, Coins,
   Wrench, Key, Briefcase, ArrowUpDown, ArrowUp, ArrowDown,
-  MessageCircle, Link2,CheckCircle2 ,CalendarX,CalendarPlus,TrashIcon,
+  MessageCircle, Link2, CheckCircle2, CalendarX, CalendarPlus, TrashIcon,
   ChevronDown, ChevronUp
 } from "lucide-react";
 import jsPDF from "jspdf";
@@ -36,55 +36,28 @@ import html2canvas from "html2canvas";
 import checklistImage from "../../assets/Checklist.png";
 import logoImage from "../../assets/logo.png";
 import agentSignatureImage from "../../assets/cache.png";
-// Mapping of color names (in any language) to their CSS color value
+
+// Mapping of color names to CSS color values
 const getColorValue = (colorName) => {
   const colorMap = {
-    // French
-    "Bleu": "#0000FF",
-    "Rouge": "#FF0000",
-    "Blanc": "#FFFFFF",
-    "Noir": "#000000",
-    "Gris": "#808080",
-    "Vert": "#00FF00",
-    "Jaune": "#FFFF00",
-    "Orange": "#FFA500",
-    "Marron": "#8B4513",
-    "Violet": "#800080",
-    "Rose": "#FFC0CB",
-    "Beige": "#F5F5DC",
-    "Argent": "#C0C0C0",
-    "Or": "#FFD700",
-    // English
-    "Blue": "#0000FF",
-    "Red": "#FF0000",
-    "White": "#FFFFFF",
-    "Black": "#000000",
-    "Gray": "#808080",
-    "Green": "#00FF00",
-    "Yellow": "#FFFF00",
-    "Orange": "#FFA500",
-    "Brown": "#8B4513",
-    "Purple": "#800080",
-    "Pink": "#FFC0CB",
-    "Silver": "#C0C0C0",
-    "Gold": "#FFD700",
-    // Arabic
-    "أزرق": "#0000FF",
-    "أحمر": "#FF0000",
-    "أبيض": "#FFFFFF",
-    "أسود": "#000000",
-    "رمادي": "#808080",
-    "أخضر": "#00FF00",
-    "أصفر": "#FFFF00",
-    "برتقالي": "#FFA500",
-    "بني": "#8B4513",
-    "بنفسجي": "#800080",
-    "وردي": "#FFC0CB",
-    "فضي": "#C0C0C0",
+    "Bleu": "#0000FF", "Rouge": "#FF0000", "Blanc": "#FFFFFF",
+    "Noir": "#000000", "Gris": "#808080", "Vert": "#00FF00",
+    "Jaune": "#FFFF00", "Orange": "#FFA500", "Marron": "#8B4513",
+    "Violet": "#800080", "Rose": "#FFC0CB", "Beige": "#F5F5DC",
+    "Argent": "#C0C0C0", "Or": "#FFD700",
+    "Blue": "#0000FF", "Red": "#FF0000", "White": "#FFFFFF",
+    "Black": "#000000", "Gray": "#808080", "Green": "#00FF00",
+    "Yellow": "#FFFF00", "Brown": "#8B4513", "Purple": "#800080",
+    "Pink": "#FFC0CB", "Silver": "#C0C0C0", "Gold": "#FFD700",
+    "أزرق": "#0000FF", "أحمر": "#FF0000", "أبيض": "#FFFFFF",
+    "أسود": "#000000", "رمادي": "#808080", "أخضر": "#00FF00",
+    "أصفر": "#FFFF00", "برتقالي": "#FFA500", "بني": "#8B4513",
+    "بنفسجي": "#800080", "وردي": "#FFC0CB", "فضي": "#C0C0C0",
     "ذهبي": "#FFD700"
   };
-  return colorMap[colorName] || colorName; // fallback to the original value
+  return colorMap[colorName] || colorName;
 };
+
 const downloadAndOpenPDF = (doc, filename) => {
   const pdfBlob = doc.output('blob');
   const url = URL.createObjectURL(pdfBlob);
@@ -98,11 +71,6 @@ const downloadAndOpenPDF = (doc, filename) => {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 };
 
-// Places the captured contract image so it always fits on a single A4 page —
-// scaled down (never up) to fit both the page width AND height, and centered.
-// This guarantees a one-page PDF that uses the full available height whenever
-// the contract's aspect ratio allows it, instead of overflowing to a 2nd page
-// or leaving blank space at the bottom.
 const addImageFittedToPage = (doc, imgData, canvas, margin = 10) => {
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -123,15 +91,11 @@ const addImageFittedToPage = (doc, imgData, canvas, margin = 10) => {
   doc.addImage(imgData, "PNG", xOffset, yOffset, imgWidth, imgHeight);
 };
 
-// Resolves a human-readable name from a user object (backend shapes vary).
 const getUserDisplayName = (user) => {
   if (!user) return "—";
   return user.Fullname || user.fullname || user.name || user.username || "—";
 };
 
-// Builds the JSON payload stored on reservation.reception_notes:
-// - receptionne_par: whoever created the reservation (fixed once set)
-// - livre_par: whoever is currently printing the contract (updates on every print)
 const buildReceptionNotesJSON = (reservation, currentUser) => {
   return JSON.stringify({
     livre_par: getUserDisplayName(currentUser),
@@ -255,7 +219,7 @@ const SignatureBlock = ({ label, signature = "", option }) => {
   );
 };
 
-// ==================== ContractLocation (SECTIONS STYLISÉES & SIGNATURES AJUSTÉES) ====================
+// ==================== ContractLocation (with sections styling) ====================
 const ContractLocation = ({
   reservation,
   showSignatures = false,
@@ -508,7 +472,6 @@ const ContractLocation = ({
                 <div className="section-content">
                   <div className="field-row"><span className="field-label">Départ :</span><span className="field-value">{getDisplayValue(datesOption, `${formatDate(reservation?.start_date)} à ${reservation?.start_time || "08:00"}`)}</span></div>
                   <div className="field-row"><span className="field-label">Retour :</span><span className="field-value">{getDisplayValue(datesOption, `${formatDate(reservation?.end_date)} à ${reservation?.end_time || "18:00"}`)}</span></div>
-                  {/* START: MODIFICATION FOR PROLONGATION */}
                   <div className="field-row">
                     <span className="field-label">Durée :</span>
                     <span className="field-value">
@@ -524,7 +487,6 @@ const ContractLocation = ({
                       <span className="field-value">{reservation.prolongation_days} jours</span>
                     </div>
                   )}
-                  {/* END: MODIFICATION */}
                   <div className="field-row"><span className="field-label">Km départ :</span><span className="field-value">{getDisplayValue(kilometrageOption, `${reservation?.kilometrage_sortie || "—"} km`)}</span></div>
                   <div className="field-row">
                     <span className="field-label">Km retour :</span>
@@ -642,22 +604,8 @@ const ContractLocation = ({
 
       <style>{`
         /* === Global === */
-        .contract-container-print {
-          max-width: 1100px;
-          margin: 0 auto;
-          background: white;
-          font-family: 'Inter', sans-serif;
-          font-size: 11px;
-          color: #1a2c3e;
-          line-height: 1.5;
-          padding: 0 6px;
-        }
-        .contract-header-table {
-          width: 100%;
-          border-bottom: 2px solid #d4af37;
-          margin-bottom: 10px;
-          padding-bottom: 6px;
-        }
+        .contract-container-print { max-width: 1100px; margin: 0 auto; background: white; font-family: 'Inter', sans-serif; font-size: 11px; color: #1a2c3e; line-height: 1.5; padding: 0 6px; }
+        .contract-header-table { width: 100%; border-bottom: 2px solid #d4af37; margin-bottom: 10px; padding-bottom: 6px; }
         .header-left { width: 30%; vertical-align: top; }
         .header-center { width: 40%; text-align: center; vertical-align: middle; }
         .header-right { width: 30%; text-align: right; vertical-align: top; }
@@ -665,80 +613,21 @@ const ContractLocation = ({
         .company-slogan { font-size: 10px; font-weight: 600; margin-top: 2px; color: #b8860b; }
         .company-phone { font-size: 9px; margin-top: 4px; color: #475569; }
         .contract-logo-print { height: 75px; width: auto; object-fit: contain; }
-        .contract-number-box {
-          border: 1px solid #94a3b8;
-          padding: 6px 12px;
-          text-align: center;
-          font-size: 10px;
-          display: inline-block;
-          background: #fefce8;
-          border-radius: 8px;
-        }
+        .contract-number-box { border: 1px solid #94a3b8; padding: 6px 12px; text-align: center; font-size: 10px; display: inline-block; background: #fefce8; border-radius: 8px; }
         .arabic-text { margin-top: 6px; font-size: 12px; font-weight: 500; color: #475569; }
-        .contract-title-print {
-          text-align: center;
-          font-size: 17px;
-          font-weight: 800;
-          text-transform: uppercase;
-          letter-spacing: 2px;
-          margin-bottom: 10px;
-          border-bottom: 1px solid #94a3b8;
-          padding-bottom: 6px;
-          color: #0f172a;
-        }
+        .contract-title-print { text-align: center; font-size: 17px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; border-bottom: 1px solid #94a3b8; padding-bottom: 6px; color: #0f172a; }
         .contract-content-table { width: 100%; }
         .contract-left-col { width: 50%; vertical-align: top; padding-right: 12px; }
         .contract-right-col { width: 50%; vertical-align: top; padding-left: 12px; }
-        .contract-section {
-          margin-bottom: 8px;
-          border: 1px solid #000000;
-          border-radius: 8px;
-          overflow: hidden;
-          background: white;
-        }
-        .section-title-print {
-          background: #c0dfc1;
-          padding: 6px 12px;
-          font-weight: 700;
-          font-size: 10px;
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-          border-bottom: 1px solid #000000;
-          color: #1e293b;
-        }
-        .checklist-section-print .checklist-table,
-        .checklist-section-print .doc-item,
-        .observation-box,
-        .signature-box,
-        .kilometrage-clause-section {
-          border-color: #000000 !important;
-        }
-        .checklist-section-print .section-title-print {
-          background: #c0dfc1 !important;
-        }
-        .obs-title {
-          background: #c0dfc1 !important;
-          border-bottom: 1px solid #000000;
-        }
+        .contract-section { margin-bottom: 8px; border: 1px solid #000000; border-radius: 8px; overflow: hidden; background: white; }
+        .section-title-print { background: #c0dfc1; padding: 6px 12px; font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #000000; color: #1e293b; }
+        .checklist-section-print .checklist-table, .checklist-section-print .doc-item, .observation-box, .signature-box, .kilometrage-clause-section { border-color: #000000 !important; }
+        .checklist-section-print .section-title-print { background: #c0dfc1 !important; }
+        .obs-title { background: #c0dfc1 !important; border-bottom: 1px solid #000000; }
         .section-content { padding: 8px 12px; }
-        .field-row {
-          display: flex;
-          margin-bottom: 4px;
-          font-size: 10px;
-          align-items: baseline;
-        }
-        .field-label {
-          width: 100px;
-          font-weight: 600;
-          color: #475569;
-          flex-shrink: 0;
-        }
-        .field-value {
-          flex: 1;
-          border-bottom: 1px dotted #cbd5e1;
-          padding-left: 4px;
-          color: #0f172a;
-        }
+        .field-row { display: flex; margin-bottom: 4px; font-size: 10px; align-items: baseline; }
+        .field-label { width: 100px; font-weight: 600; color: #475569; flex-shrink: 0; }
+        .field-value { flex: 1; border-bottom: 1px dotted #cbd5e1; padding-left: 4px; color: #0f172a; }
         .matricule-code { font-family: 'Courier New', monospace; font-weight: 700; color: #b8860b; letter-spacing: 0.5px; }
         .total-row .total-amount { font-weight: 800; font-size: 12px; color: #b8860b; }
         .remaining-amount { font-weight: 700; color: #dc2626; }
@@ -747,143 +636,30 @@ const ContractLocation = ({
         .checklist-table { width: 100%; margin-bottom: 8px; }
         .checklist-cell { width: 50%; text-align: center; vertical-align: top; padding: 0 6px; }
         .checklist-label { font-weight: 700; margin-bottom: 4px; font-size: 10px; color: #334155; }
-        .documents-row {
-          display: flex;
-          flex-wrap: wrap;
-          align-items: center;
-          padding: 8px 12px;
-          background: #f9fafb;
-          border-radius: 8px;
-          margin-top: 6px;
-          gap: 10px;
-        }
+        .documents-row { display: flex; flex-wrap: wrap; align-items: center; padding: 8px 12px; background: #f9fafb; border-radius: 8px; margin-top: 6px; gap: 10px; }
         .documents-label { font-weight: 700; margin-right: 4px; font-size: 10px; color: #334155; }
         .documents-items { display: flex; flex-wrap: wrap; gap: 10px; }
-        .doc-item {
-          display: inline-flex;
-          align-items: center;
-          gap: 4px;
-          font-size: 9px;
-          background: white;
-          padding: 3px 8px;
-          border-radius: 12px;
-          border: 1px solid #94a3b8;
-        }
-        .checkbox-square {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          width: 13px;
-          height: 13px;
-          border: 1.5px solid #334155;
-          background: white;
-          font-size: 9px;
-          font-weight: bold;
-          margin-right: 2px;
-          border-radius: 2px;
-        }
+        .doc-item { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; background: white; padding: 3px 8px; border-radius: 12px; border: 1px solid #94a3b8; }
+        .checkbox-square { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px; border: 1.5px solid #334155; background: white; font-size: 9px; font-weight: bold; margin-right: 2px; border-radius: 2px; }
         .checkbox-square.checked { background: #d4af37 !important; border-color: #d4af37 !important; color: #0f172a !important; }
-        .car-diagram-container img {
-          width: 100%;
-          max-width: 130px;
-          height: auto;
-          border: 1px solid #94a3b8;
-          border-radius: 6px;
-          background: #fafafa;
-          padding: 4px;
-        }
-        .kilometrage-clause-section {
-          margin: 10px 0;
-          padding: 10px 16px;
-          border: 2px solid #eab308;
-          border-radius: 10px;
-          background: #fefce8;
-          box-shadow: 0 1px 4px rgba(234, 179, 8, 0.15);
-        }
-        .kilometrage-clause-title {
-          font-size: 11px;
-          font-weight: 800;
-          color: #92400e;
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-          margin-bottom: 6px;
-          display: flex;
-          align-items: center;
-          gap: 4px;
-        }
-        .kilometrage-clause-text {
-          font-size: 10.5px;
-          color: #1a2c3e;
-          line-height: 1.5;
-          font-weight: 500;
-        }
+        .car-diagram-container img { width: 100%; max-width: 130px; height: auto; border: 1px solid #94a3b8; border-radius: 6px; background: #fafafa; padding: 4px; }
+        .kilometrage-clause-section { margin: 10px 0; padding: 10px 16px; border: 2px solid #eab308; border-radius: 10px; background: #fefce8; box-shadow: 0 1px 4px rgba(234, 179, 8, 0.15); }
+        .kilometrage-clause-title { font-size: 11px; font-weight: 800; color: #92400e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; display: flex; align-items: center; gap: 4px; }
+        .kilometrage-clause-text { font-size: 10.5px; color: #1a2c3e; line-height: 1.5; font-weight: 500; }
         .observations-row-print { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; }
-        .observation-box {
-          flex: 1;
-          border: 1px solid #94a3b8;
-          border-radius: 10px;
-          overflow: hidden;
-          background: white;
-        }
+        .observation-box { flex: 1; border: 1px solid #94a3b8; border-radius: 10px; overflow: hidden; background: white; }
         .observation-box.half-width { flex: 0 0 calc(33.33% - 8px); }
-        .obs-title {
-          display: block;
-          padding: 6px 12px;
-          background: #f8fafc;
-          font-weight: 700;
-          font-size: 10px;
-          border-bottom: 1px solid #94a3b8;
-          color: #1e293b;
-        }
-        .observation-content {
-          padding: 8px 12px;
-          font-size: 9.5px;
-          min-height: 50px;
-          color: #334155;
-        }
+        .obs-title { display: block; padding: 6px 12px; background: #f8fafc; font-weight: 700; font-size: 10px; border-bottom: 1px solid #94a3b8; color: #1e293b; }
+        .observation-content { padding: 8px 12px; font-size: 9.5px; min-height: 50px; color: #334155; }
         .signatures-row-print { display: flex; gap: 20px; margin: 10px 0; }
         .signature-block { flex: 1; text-align: center; }
         .signature-label { font-size: 9px; font-weight: 700; margin-bottom: 6px; color: #475569; }
-        .signature-box {
-          border: 1px solid #94a3b8;
-          height: 50px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          background: #fafafa;
-          border-radius: 6px;
-          overflow: hidden;
-        }
-        .signature-box img {
-          max-height: 45px;
-          max-width: 90%;
-          object-fit: contain;
-        }
-        .signature-text {
-          font-size: 9px;
-          font-style: italic;
-          color: #64748b;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          max-width: 100%;
-        }
-        .contract-footer-print {
-          margin-top: 8px;
-          padding-top: 6px;
-          border-top: 1px solid #d4af37;
-          text-align: center;
-          font-size: 8px;
-          color: #64748b;
-        }
+        .signature-box { border: 1px solid #94a3b8; height: 50px; display: flex; align-items: center; justify-content: center; background: #fafafa; border-radius: 6px; overflow: hidden; }
+        .signature-box img { max-height: 45px; max-width: 90%; object-fit: contain; }
+        .signature-text { font-size: 9px; font-style: italic; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+        .contract-footer-print { margin-top: 8px; padding-top: 6px; border-top: 1px solid #d4af37; text-align: center; font-size: 8px; color: #64748b; }
         .footer-line { margin-bottom: 2px; line-height: 1.3; }
-        .contract-number-box.stylish {
-          border: none;
-          background: #f1fee8d1;
-          border-radius: 10px;
-          box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-          padding: 4px 14px;
-        }
+        .contract-number-box.stylish { border: none; background: #91ea513f; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); padding: 4px 14px; }
         .contract-number-box.stylish .contract-number-label { font-size: 9px; color: #92400e; letter-spacing: 1px; }
         .contract-number-box.stylish .contract-number-value { font-size: 20px; font-weight: 800; color: #1a1a2e; }
         @media print {
@@ -891,7 +667,7 @@ const ContractLocation = ({
           .checkbox-square.checked { background: black !important; border-color: black !important; color: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
           .section-title-print { background: #f5f5f5 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
           .documents-row { background: #f9f9f9 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-          .contract-number-box.stylish { background: #fefce8 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .contract-number-box.stylish { background: #f1fee8 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
           .kilometrage-clause-section { background: #fefce8 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         }
         .contract-container-print .field-value { font-weight: 600; }
@@ -1117,9 +893,8 @@ const SousLocationSearch = ({ sousLocations, selectedId, onSelect, onCreateNew, 
 };
 
 // ==================== ReservationForm ====================
-// ==================== ReservationForm (avec correction des jours) ====================
 const ReservationForm = ({
-  isOpen, onClose, onSubmit, editingReservation, clients, cars, matricules, submitting,onSubmitAndNavigate   
+  isOpen, onClose, onSubmit, editingReservation, clients, cars, matricules, submitting, onSubmitAndNavigate
 }) => {
   const dispatch = useDispatch();
   const user = useSelector(selectUser);
@@ -1233,21 +1008,42 @@ const ReservationForm = ({
 
   // ---------- Gestionnaires (corrigés) ----------
   const handleStartDateChange = (value) => {
-    setFormData(prev => ({ ...prev, start_date: value }));
-  };
+  setFormData(prev => ({ ...prev, start_date: value }));
+  if (value && formData.rental_days) {
+    const start = new Date(value);
+    const end = new Date(start);
+    end.setDate(start.getDate() + formData.rental_days);
+    setFormData(prev => ({ ...prev, end_date: end.toISOString().split("T")[0] }));
+  }
+};
 
-  const handleEndDateChange = (value) => {
-    setFormData(prev => ({ ...prev, end_date: value }));
-  };
+const handleEndDateChange = (value) => {
+  setFormData(prev => ({ ...prev, end_date: value }));
+  if (formData.start_date && value) {
+    const start = new Date(formData.start_date);
+    const end = new Date(value);
+    const diffTime = Math.abs(end - start);
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    setFormData(prev => ({ ...prev, rental_days: diffDays === 0 ? 1 : diffDays }));
+  }
+};
 
-  const handleRentalDaysChange = (value) => {
-    const days = parseInt(value, 10);
-    if (isNaN(days) || days < 1) {
-      setFormData(prev => ({ ...prev, rental_days: 1 }));
-    } else {
-      setFormData(prev => ({ ...prev, rental_days: days }));
+const handleRentalDaysChange = (value) => {
+  if (value === '') {
+    setFormData(prev => ({ ...prev, rental_days: null }));
+    return;
+  }
+  const days = parseInt(value, 10);
+  if (!isNaN(days) && days >= 1) {
+    setFormData(prev => ({ ...prev, rental_days: days }));
+    if (formData.start_date) {
+      const start = new Date(formData.start_date);
+      const end = new Date(start);
+      end.setDate(start.getDate() + days);
+      setFormData(prev => ({ ...prev, end_date: end.toISOString().split('T')[0] }));
     }
-  };
+  }
+};
 
   // ---------- Gestionnaires clients ----------
   const handleClientSelect = (client) => {
@@ -1384,45 +1180,45 @@ const ReservationForm = ({
     }));
     toast.success("Paiement supprimé");
   };
-// ===== VALIDATION HELPER =====
-const getValidatedData = () => {
-  let clientId = formData.client_id;
-  if (isNewClient && !clientId) {
-    toast.error("Veuillez confirmer la création du client en cliquant sur 'Confirmer la création'");
-    return null;
-  }
-  if (!clientId) {
-    toast.error("Veuillez sélectionner ou créer un client");
-    return null;
-  }
-  const reservationData = {
-    ...formData,
-    client_id: clientId,
-    payment_history: paymentHistory
+
+  // ===== VALIDATION HELPER =====
+  const getValidatedData = () => {
+    let clientId = formData.client_id;
+    if (isNewClient && !clientId) {
+      toast.error("Veuillez confirmer la création du client en cliquant sur 'Confirmer la création'");
+      return null;
+    }
+    if (!clientId) {
+      toast.error("Veuillez sélectionner ou créer un client");
+      return null;
+    }
+    const reservationData = {
+      ...formData,
+      client_id: clientId,
+      payment_history: paymentHistory
+    };
+    return reservationData;
   };
-  return reservationData;
-};
+
   // ---------- Soumission ----------
   const handleSubmit = async (e) => {
-  e.preventDefault();
-  const data = getValidatedData();
-  if (!data) return;
-  onSubmit(data);
-};
-
-const handleSubmitAndNavigate = () => {
-  const data = getValidatedData();
-  if (!data) return;
-  if (onSubmitAndNavigate) {
-    onSubmitAndNavigate(data);
-  } else {
-    // fallback (should not happen)
+    e.preventDefault();
+    const data = getValidatedData();
+    if (!data) return;
     onSubmit(data);
-  }
-};
+  };
+
+  const handleSubmitAndNavigate = () => {
+    const data = getValidatedData();
+    if (!data) return;
+    if (onSubmitAndNavigate) {
+      onSubmitAndNavigate(data);
+    } else {
+      onSubmit(data);
+    }
+  };
 
   // ---------- Effets existants (inchangés) ----------
-  // Chargement de la réservation en édition
   useEffect(() => {
     if (editingReservation) {
       const start = editingReservation.start_date?.split("T")[0] || "";
@@ -1510,8 +1306,6 @@ const handleSubmitAndNavigate = () => {
     const remaining = Math.max(total - paid, 0);
     setFormData(prev => ({ ...prev, remaining_amount: remaining }));
   }, [formData.total_price, formData.amount_paid]);
-
-
 
   useEffect(() => {
     if (isOpen) {
@@ -1675,7 +1469,7 @@ const handleSubmitAndNavigate = () => {
               )}
             </div>
 
-            {/* Dates et durée (avec champs jours corrigés) */}
+            {/* Dates et durée */}
             <div className="form-card">
               <div className="card-header">
                 <Calendar size={16} className="text-emerald" />
@@ -1692,18 +1486,18 @@ const handleSubmitAndNavigate = () => {
               <div className="field-block">
                 <label>Nombre de jours</label>
                 <input
-  type="number"
-  className="styled-input"
-  value={formData.rental_days ?? ''}
-  onChange={(e) => {
-    const val = e.target.value;
-    setFormData(prev => ({
-      ...prev,
-      rental_days: val === '' ? null : parseInt(val, 10) || null
-    }));
-  }}
-  min="1"
-/>
+                  type="number"
+                  className="styled-input"
+                  value={formData.rental_days ?? ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setFormData(prev => ({
+                      ...prev,
+                      rental_days: val === '' ? null : parseInt(val, 10) || null
+                    }));
+                  }}
+                  min="1"
+                />
               </div>
             </div>
 
@@ -1788,38 +1582,38 @@ const handleSubmitAndNavigate = () => {
                   />
                 </div>
                 {isMatriculeDropdownOpen && filteredMatricules.length > 0 && (
-  <div className="styled-dropdown">
-    {filteredMatricules.map(mat => {
-      const carForMat = cars.find(c => c.id == mat.car_id);
-      const isSold = mat.status === 'sold';
-      return (
-        <div key={mat.id} className="dropdown-item" onClick={() => handleMatriculeSelect(mat)}>
-          <div className="dropdown-title">
-            <strong>{mat.matricule_code}</strong>
-            <span className={`badge ${isSold ? 'badge-danger' : 'badge-success'}`} style={{ marginLeft: '8px' }}>
-              {isSold ? 'Inactif' : 'Actif'}
-            </span>
-            {carForMat && `- ${carForMat.brand} ${carForMat.model}`}
-          </div>
-          <div className="dropdown-sub">Kilométrage: {mat.kilometrage} km • {carForMat && `${carForMat.price_per_day} DH/jour`}</div>
-        </div>
-      );
-    })}
-  </div>
-)}
+                  <div className="styled-dropdown">
+                    {filteredMatricules.map(mat => {
+                      const carForMat = cars.find(c => c.id == mat.car_id);
+                      const isSold = mat.status === 'sold';
+                      return (
+                        <div key={mat.id} className="dropdown-item" onClick={() => handleMatriculeSelect(mat)}>
+                          <div className="dropdown-title">
+                            <strong>{mat.matricule_code}</strong>
+                            <span className={`badge ${isSold ? 'badge-danger' : 'badge-success'}`} style={{ marginLeft: '8px' }}>
+                              {isSold ? 'Inactif' : 'Actif'}
+                            </span>
+                            {carForMat && `- ${carForMat.brand} ${carForMat.model}`}
+                          </div>
+                          <div className="dropdown-sub">Kilométrage: {mat.kilometrage} km • {carForMat && `${carForMat.price_per_day} DH/jour`}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 {selectedMatricule && (
-  <div className="selected-info-block">
-    <CheckCircle size={16} className="selected-icon" />
-    <span className="selected-label">Matricule sélectionné :</span>
-    <span className="selected-value">{selectedMatricule.matricule_code}</span>
-    <span className={`badge ${selectedMatricule.status === 'sold' ? 'badge-danger' : 'badge-success'}`}>
-      {selectedMatricule.status === 'sold' ? 'Inactif' : 'Actif'}
-    </span>
-    <button type="button" className="selected-clear" onClick={clearMatriculeSelection}>
-      <X size={14} />
-    </button>
-  </div>
-)}
+                  <div className="selected-info-block">
+                    <CheckCircle size={16} className="selected-icon" />
+                    <span className="selected-label">Matricule sélectionné :</span>
+                    <span className="selected-value">{selectedMatricule.matricule_code}</span>
+                    <span className={`badge ${selectedMatricule.status === 'sold' ? 'badge-danger' : 'badge-success'}`}>
+                      {selectedMatricule.status === 'sold' ? 'Inactif' : 'Actif'}
+                    </span>
+                    <button type="button" className="selected-clear" onClick={clearMatriculeSelection}>
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="input-group-row">
                 <div className="field-block">
@@ -1865,33 +1659,33 @@ const handleSubmitAndNavigate = () => {
                 <div className="field-block"><label>Reste à payer (DH)</label><input type="number" step="0.01" className="styled-input" value={formData.remaining_amount} readOnly style={{ backgroundColor: "#f3f4f6" }} /></div>
                 <div className="field-block"><label>Statut</label>
                   <select
-  className="styled-select"
-  value={formData.status}
-  onChange={(e) => {
-    const newStatus = e.target.value;
-    setFormData(prev => {
-      const updates = { status: newStatus };
-      const now = new Date();
-      const currentTime = now.toTimeString().slice(0, 5);
-      if (newStatus === 'confirmed') {
-        updates.start_time = currentTime;
-      }
-      if (newStatus === 'completed') {
-        const currentDate = now.toISOString().split('T')[0];
-        updates.end_date = currentDate;
-        updates.end_time = currentTime;
-      }
-      return { ...prev, ...updates };
-    });
-  }}
->
-  <option value="pending">En attente</option>
-  <option value="confirmed">Confirmée</option>
-  <option value="contacted">Contacté</option>
-  <option value="completed">Terminée</option>
-  <option value="retard">En retard</option>
-  <option value="cancelled">Annulée</option>
-</select>
+                    className="styled-select"
+                    value={formData.status}
+                    onChange={(e) => {
+                      const newStatus = e.target.value;
+                      setFormData(prev => {
+                        const updates = { status: newStatus };
+                        const now = new Date();
+                        const currentTime = now.toTimeString().slice(0, 5);
+                        if (newStatus === 'confirmed') {
+                          updates.start_time = currentTime;
+                        }
+                        if (newStatus === 'completed') {
+                          const currentDate = now.toISOString().split('T')[0];
+                          updates.end_date = currentDate;
+                          updates.end_time = currentTime;
+                        }
+                        return { ...prev, ...updates };
+                      });
+                    }}
+                  >
+                    <option value="pending">En attente</option>
+                    <option value="confirmed">Confirmée</option>
+                    <option value="contacted">Contacté</option>
+                    <option value="completed">Terminée</option>
+                    <option value="retard">En retard</option>
+                    <option value="cancelled">Annulée</option>
+                  </select>
                 </div>
               </div>
               <div className="inline-payment-section">
@@ -2018,31 +1812,27 @@ const handleSubmitAndNavigate = () => {
         )}
 
         <div className="modal-footer-actions">
-  <button type="button" className="btn-modal-secondary" onClick={onClose}>Annuler</button>
-  
-  {/* Standard submit */}
-  <button type="submit" className="btn-modal-primary" disabled={submitting}>
-    {submitting ? "Traitement..." : (editingReservation ? "Mettre à jour" : "Créer la réservation")}
-  </button>
-  
-  {/* New button with changed color */}
-  {onSubmitAndNavigate && (
-    <button
-      type="button"
-      className="btn-modal-primary"
-      onClick={handleSubmitAndNavigate}
-      disabled={submitting}
-      style={{
-        background: '#3b82f6',
-        transition: 'background 0.2s'
-      }}
-      onMouseEnter={(e) => e.currentTarget.style.background = '#2563eb'}
-      onMouseLeave={(e) => e.currentTarget.style.background = '#3b82f6'}
-    >
-      {submitting ? "Traitement..." : (editingReservation ? "Mettre à jour & Contrat" : "Créer & Contrat")}
-    </button>
-  )}
-</div>
+          <button type="button" className="btn-modal-secondary" onClick={onClose}>Annuler</button>
+          <button type="submit" className="btn-modal-primary" disabled={submitting}>
+            {submitting ? "Traitement..." : (editingReservation ? "Mettre à jour" : "Créer la réservation")}
+          </button>
+          {onSubmitAndNavigate && (
+            <button
+              type="button"
+              className="btn-modal-primary"
+              onClick={handleSubmitAndNavigate}
+              disabled={submitting}
+              style={{
+                background: '#3b82f6',
+                transition: 'background 0.2s'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = '#2563eb'}
+              onMouseLeave={(e) => e.currentTarget.style.background = '#3b82f6'}
+            >
+              {submitting ? "Traitement..." : (editingReservation ? "Mettre à jour & Contrat" : "Créer & Contrat")}
+            </button>
+          )}
+        </div>
       </form>
     </div>
   );
@@ -2051,8 +1841,6 @@ const handleSubmitAndNavigate = () => {
 // ==================== ContractViewPage ====================
 const ContractViewPage = ({ reservation, onClose, currentUser, clients }) => {
   const dispatch = useDispatch();
-  // Local override so the printed/on-screen contract reflects the reception_notes
-  // JSON right after it's saved, without waiting on the parent's reservation prop.
   const [receptionNotesOverride, setReceptionNotesOverride] = useState(reservation?.reception_notes || null);
 
   const [contractSignatures, setContractSignatures] = useState({
@@ -2071,14 +1859,14 @@ const ContractViewPage = ({ reservation, onClose, currentUser, clients }) => {
     autorisation: true
   });
   const [contractDisplayOptions, setContractDisplayOptions] = useState({
-    prices: "show",
+    prices: "dash",
     clientInfo: "show",
     secondDriver: "show",
     vehicleInfo: "show",
     deliveryReception: "show",
     rentalDates: "show",
     kilometrage: "show",
-    rentalDays: "show",
+    rentalDays: "dash",
     observations: "show",
     insurance: "show",
     depositGuarantee: "show",
@@ -2093,14 +1881,14 @@ const ContractViewPage = ({ reservation, onClose, currentUser, clients }) => {
   };
   const handleResetAllOptions = () => {
     setContractDisplayOptions({
-      prices: "show",
+      prices: "dash",
       clientInfo: "show",
       secondDriver: "show",
       vehicleInfo: "show",
       deliveryReception: "show",
       rentalDates: "show",
       kilometrage: "show",
-      rentalDays: "show",
+      rentalDays: "dash",
       observations: "show",
       insurance: "show",
       depositGuarantee: "show",
@@ -2113,13 +1901,10 @@ const ContractViewPage = ({ reservation, onClose, currentUser, clients }) => {
     try {
       toast.loading("Génération du contrat en cours...", { id: "contract-pdf" });
 
-      // Persist LIVRÉ PAR / RÉCEPTIONNÉ PAR as a JSON snapshot on reception_notes
-      // so the contract keeps showing who printed it last, even after reload.
       const notesJSON = buildReceptionNotesJSON(reservation, currentUser);
       try {
         await dispatch(updateReservation({ id: reservation.id, data: { reception_notes: notesJSON } })).unwrap();
         setReceptionNotesOverride(notesJSON);
-        // Let React re-render the contract with the new reception_notes before capture.
         await new Promise(resolve => setTimeout(resolve, 50));
       } catch (e) {
         console.error("Failed to save reception_notes", e);
@@ -2308,6 +2093,16 @@ export default function AdminReservations() {
   const loading = useSelector(selectReservationsLoading);
   const currentUser = useSelector(selectUser);
 
+  // ===== RECHERCHE PAR NOM (depuis AdminMatriculesClients) =====
+  const searchParam = searchParams.get('search');
+
+  useEffect(() => {
+    if (searchParam) {
+      setSearch(searchParam);
+      setCurrentPage(1);
+    }
+  }, [searchParam, setSearchParams]);
+
   const [details, setDetails] = useState(null);
   const [expandedRowId, setExpandedRowId] = useState(null);
   const [search, setSearch] = useState("");
@@ -2419,7 +2214,7 @@ export default function AdminReservations() {
       toast.success("Réservation créée avec succès!");
       setShowReservationForm(false);
 
-await syncReportForReservation(reservation, dispatch, { silent: true });
+      await syncReportForReservation(reservation, dispatch, { silent: true });
 
       await dispatch(fetchReservations(true));
       await dispatch(refreshMatricules(true));
@@ -2439,7 +2234,7 @@ await syncReportForReservation(reservation, dispatch, { silent: true });
       setShowReservationForm(false);
       setEditingReservation(null);
 
-await syncReportForReservation(reservation, dispatch, { silent: true });
+      await syncReportForReservation(reservation, dispatch, { silent: true });
 
       await dispatch(fetchReservations(true));
       await dispatch(refreshMatricules(true));
@@ -2449,61 +2244,51 @@ await syncReportForReservation(reservation, dispatch, { silent: true });
       setSubmitting(false);
     }
   };
-// ===== CRUD with navigation (synchrone) =====
-const handleCreateAndNavigate = async (data) => {
-  setSubmitting(true);
-  try {
-    const result = await dispatch(createReservation(data)).unwrap();
-    const reservation = result.reservation || result;
-    toast.success("Réservation créée avec succès!");
 
-    // La synchronisation du rapport est volontairement omise ici
-    // pour éviter le toast "Nouveau paiement..." intempestif.
-    // Elle sera effectuée lors d'une action ultérieure (confirmation, impression, etc.).
-    // await syncReportForReservation(reservation, dispatch, { silent: true });
+  const handleCreateAndNavigate = async (data) => {
+    setSubmitting(true);
+    try {
+      const result = await dispatch(createReservation(data)).unwrap();
+      const reservation = result.reservation || result;
+      toast.success("Réservation créée avec succès!");
+      // La synchronisation du rapport est volontairement omise ici
+      await dispatch(fetchReservations(true));
+      await dispatch(refreshMatricules(true));
 
-    await dispatch(fetchReservations(true));
-    await dispatch(refreshMatricules(true));
+      flushSync(() => {
+        setShowReservationForm(false);
+        setSelectedContractReservation(reservation);
+        setShowContract(true);
+      });
+    } catch (error) {
+      toast.error(error.message || "Erreur lors de la création");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
-    // Fermeture du formulaire et ouverture du contrat en un seul rendu
-    flushSync(() => {
-      setShowReservationForm(false);
-      setSelectedContractReservation(reservation);
-      setShowContract(true);
-    });
-  } catch (error) {
-    toast.error(error.message || "Erreur lors de la création");
-  } finally {
-    setSubmitting(false);
-  }
-};
+  const handleUpdateAndNavigate = async (data) => {
+    setSubmitting(true);
+    try {
+      const result = await dispatch(updateReservation({ id: editingReservation.id, data })).unwrap();
+      const reservation = result.reservation || result;
+      toast.success("Réservation modifiée avec succès!");
+      await dispatch(fetchReservations(true));
+      await dispatch(refreshMatricules(true));
 
-const handleUpdateAndNavigate = async (data) => {
-  setSubmitting(true);
-  try {
-    const result = await dispatch(updateReservation({ id: editingReservation.id, data })).unwrap();
-    const reservation = result.reservation || result;
-    toast.success("Réservation modifiée avec succès!");
+      flushSync(() => {
+        setShowReservationForm(false);
+        setEditingReservation(null);
+        setSelectedContractReservation(reservation);
+        setShowContract(true);
+      });
+    } catch (error) {
+      toast.error(error.message || "Erreur lors de la modification");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
-    // La synchronisation du rapport est volontairement omise ici
-    // pour éviter le toast "Nouveau paiement..." intempestif.
-    // await syncReportForReservation(reservation, dispatch, { silent: true });
-
-    await dispatch(fetchReservations(true));
-    await dispatch(refreshMatricules(true));
-
-    flushSync(() => {
-      setShowReservationForm(false);
-      setEditingReservation(null);
-      setSelectedContractReservation(reservation);
-      setShowContract(true);
-    });
-  } catch (error) {
-    toast.error(error.message || "Erreur lors de la modification");
-  } finally {
-    setSubmitting(false);
-  }
-};
   const handleEdit = (reservation) => {
     setEditingReservation(reservation);
     setShowReservationForm(true);
@@ -2824,8 +2609,6 @@ const handleUpdateAndNavigate = async (data) => {
     setShowPrintOptions(false);
     const res = printReservation;
 
-    // Persist LIVRÉ PAR / RÉCEPTIONNÉ PAR as a JSON snapshot on reception_notes
-    // so the contract keeps showing who printed it last, even after reload.
     if (res) {
       const notesJSON = buildReceptionNotesJSON(res, currentUser);
       try {
@@ -2922,7 +2705,6 @@ const handleUpdateAndNavigate = async (data) => {
       if (r.status === 'pending' || r.status === 'cancelled' || r.status === 'contacted') {
         return false;
       }
-      // ==============================================================
 
       const client = clients.find(c => c.id === r.client_id);
       const car = cars.find(c => c.id === r.car_id);

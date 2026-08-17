@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import {
   Search, RefreshCw, Bell, Tag, Car, User, Users, Clock, CalendarDays,
   DollarSign, Wallet, ArrowUpDown, ArrowUp, ArrowDown, X,
-  ExternalLink, History, CheckCircle2, UserX, Receipt
+  ExternalLink, History, CheckCircle2, UserX, Receipt, Calendar
 } from "lucide-react";
 
 export default function AdminMatriculesClients() {
@@ -24,7 +24,7 @@ export default function AdminMatriculesClients() {
   const loading = useSelector(selectMatriculesLoading);
 
   const [searchTerm, setSearchTerm] = useState('');
-  const [clientFilter, setClientFilter] = useState('all'); // all | current | previous | none
+  const [clientFilter, setClientFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [sortField, setSortField] = useState('matricule');
@@ -59,12 +59,19 @@ export default function AdminMatriculesClients() {
       .filter(r => !['pending', 'cancelled', 'contacted'].includes(r.status));
 
   const getCurrentReservation = (matId) => {
+    const allRes = getMatriculeReservations(matId);
+    // 1) Priorité aux 'retard' (toujours considéré comme actuel)
+    const retard = allRes.filter(r => r.status === 'retard');
+    if (retard.length > 0) {
+      return retard.sort((a, b) => new Date(b.start_date) - new Date(a.start_date))[0];
+    }
+    // 2) Sinon les 'confirmed' avec end_date >= aujourd'hui
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    return getMatriculeReservations(matId)
-      .filter(r => ['confirmed', 'retard'].includes(r.status))
-      .filter(r => r.end_date && new Date(r.end_date) >= today)
-      .sort((a, b) => new Date(a.start_date) - new Date(b.start_date))[0] || null;
+    const confirmed = allRes
+      .filter(r => r.status === 'confirmed' && r.end_date && new Date(r.end_date) >= today)
+      .sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
+    return confirmed.length > 0 ? confirmed[0] : null;
   };
 
   const getLastReservation = (matId) => {
@@ -80,11 +87,9 @@ export default function AdminMatriculesClients() {
     return { reservation: last, isCurrent: false };
   };
 
-  // Sum remaining for all reservations of this matricule (for global stats)
   const getTotalRemainingAll = (matId) =>
     getMatriculeReservations(matId).reduce((sum, r) => sum + (parseFloat(r.remaining_amount) || 0), 0);
 
-  // NEW: sum remaining for a specific client on this matricule
   const getTotalRemainingForClient = (matId, clientId) => {
     if (!clientId) return 0;
     return getMatriculeReservations(matId)
@@ -135,11 +140,15 @@ export default function AdminMatriculesClients() {
   const enriched = (matricules || []).map(mat => {
     const car = cars.find(c => c.id === mat.car_id);
     const { reservation: dispRes, isCurrent } = getDisplayReservation(mat.id);
+    // 🔥 FORCER "Actuel" si la réservation affichée a le statut 'retard'
+    const isCurrentFinal = dispRes?.status === 'retard' ? true : isCurrent;
     const client = dispRes ? clients.find(c => c.id === dispRes.client_id) : null;
     const duration = dispRes ? calcDurationDays(dispRes.start_date, dispRes.end_date) : null;
-    // --- NEW: total remaining for this specific client (not all clients) ---
     const totalRestantForClient = getTotalRemainingForClient(mat.id, client?.id);
-    return { mat, car, dispRes, isCurrent, client, duration, totalRestantForClient };
+    const period = dispRes
+      ? `${formatDate(dispRes.start_date)} → ${formatDate(dispRes.end_date)}`
+      : '—';
+    return { mat, car, dispRes, isCurrent: isCurrentFinal, client, duration, totalRestantForClient, period };
   });
 
   const filteredList = enriched.filter(({ mat, car, client, isCurrent }) => {
@@ -169,6 +178,8 @@ export default function AdminMatriculesClients() {
         aVal = a.client ? `${a.client.prenom} ${a.client.nom}`.toLowerCase() : '';
         bVal = b.client ? `${b.client.prenom} ${b.client.nom}`.toLowerCase() : '';
         break;
+      case 'period':
+        aVal = a.period || ''; bVal = b.period || ''; break;
       case 'duration':
         aVal = a.duration || 0; bVal = b.duration || 0; break;
       case 'total':
@@ -183,7 +194,6 @@ export default function AdminMatriculesClients() {
         aVal = a.dispRes ? parseFloat(a.dispRes.remaining_amount) || 0 : 0;
         bVal = b.dispRes ? parseFloat(b.dispRes.remaining_amount) || 0 : 0;
         break;
-      // --- UPDATED: sort by totalRestantForClient (per client) ---
       case 'totalRemaining':
         aVal = a.totalRestantForClient || 0;
         bVal = b.totalRestantForClient || 0;
@@ -198,18 +208,28 @@ export default function AdminMatriculesClients() {
   const totalPages = Math.ceil(filteredList.length / itemsPerPage);
   const paginated = filteredList.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
-  // ==================== STATS (global, not per client) ====================
+  // ==================== STATS ====================
   const stats = {
     total: matricules?.length || 0,
     withCurrent: enriched.filter(e => e.isCurrent).length,
     withoutClient: enriched.filter(e => !e.client).length,
-    totalDue: enriched.reduce((sum, e) => sum + getTotalRemainingAll(e.mat.id), 0) // still all clients
+    totalDue: enriched.reduce((sum, e) => sum + getTotalRemainingAll(e.mat.id), 0)
   };
 
   // ==================== ACTIONS ====================
   const handleOpenHistory = (mat) => setHistoryMatricule(mat);
   const handleCloseHistory = () => setHistoryMatricule(null);
-  const handleGoToMatricule = () => navigate('/matricules');
+  const handleGoToMatricule = (matriculeId) => {
+    navigate(`/matricules?focus=${matriculeId}`);
+  };
+  const handleGoToReservation = (reservationId, clientName) => {
+    if (!reservationId) return;
+    if (clientName) {
+      navigate(`/reservations?search=${encodeURIComponent(clientName)}`);
+    } else {
+      navigate(`/reservations?focus=${reservationId}`);
+    }
+  };
 
   if (loading) return (
     <div className="loading">
@@ -374,6 +394,7 @@ export default function AdminMatriculesClients() {
                     <th onClick={() => handleSort("matricule")} className="sortable-header">Plaque {getSortIcon("matricule")}</th>
                     <th onClick={() => handleSort("car")} className="sortable-header">Véhicule associé {getSortIcon("car")}</th>
                     <th onClick={() => handleSort("client")} className="sortable-header">Client {getSortIcon("client")}</th>
+                    <th onClick={() => handleSort("period")} className="sortable-header">Période {getSortIcon("period")}</th>
                     <th onClick={() => handleSort("duration")} className="sortable-header">Durée {getSortIcon("duration")}</th>
                     <th onClick={() => handleSort("total")} className="sortable-header">Total {getSortIcon("total")}</th>
                     <th onClick={() => handleSort("paid")} className="sortable-header">Payé {getSortIcon("paid")}</th>
@@ -384,9 +405,9 @@ export default function AdminMatriculesClients() {
                 </thead>
                 <tbody>
                   {paginated.length === 0 ? (
-                    <tr><td colSpan="9" className="text-center py-12">Aucun matricule trouvé</td></tr>
+                    <tr><td colSpan="10" className="text-center py-12">Aucun matricule trouvé</td></tr>
                   ) : (
-                    paginated.map(({ mat, car, dispRes, isCurrent, client, duration, totalRestantForClient }) => (
+                    paginated.map(({ mat, car, dispRes, isCurrent, client, duration, totalRestantForClient, period }) => (
                       <tr key={mat.id}>
                         <td style={{ fontWeight: 600, color: '#0f172a' }}>{mat.matricule_code}</td>
                         <td>{car ? `${car.brand} ${car.model}` : 'Non assigné'}</td>
@@ -403,6 +424,14 @@ export default function AdminMatriculesClients() {
                           ) : (
                             <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>Aucun client</span>
                           )}
+                        </td>
+                        <td>
+                          {dispRes ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem' }}>
+                              <Calendar size={12} style={{ color: '#64748b' }} />
+                              <span>{period}</span>
+                            </div>
+                          ) : '—'}
                         </td>
                         <td>{duration ? `${duration} jours` : '—'}</td>
                         <td>
@@ -431,7 +460,6 @@ export default function AdminMatriculesClients() {
                             <span style={{ color: '#cbd5e1' }}>—</span>
                           )}
                         </td>
-                        {/* --- UPDATED: show totalRestantForClient (per client) --- */}
                         <td>
                           <span style={{ fontWeight: 700, color: totalRestantForClient > 0 ? '#dc2626' : '#16a34a' }}>
                             {formatMoney(totalRestantForClient)}
@@ -442,8 +470,17 @@ export default function AdminMatriculesClients() {
                             <button className="fin-action-btn view" onClick={() => handleOpenHistory(mat)} title="Historique des réservations">
                               <History size={13} /> Historique
                             </button>
-                            <button className="fin-action-btn open" onClick={handleGoToMatricule} title="Ouvrir la fiche matricule">
-                              <ExternalLink size={13} /> Fiche
+                            {dispRes && (
+                              <button
+                                className="fin-action-btn primary"
+                                onClick={() => handleGoToReservation(dispRes.id, client ? `${client.prenom} ${client.nom}` : null)}
+                                title="Voir la réservation"
+                              >
+                                <ExternalLink size={13} /> Réservation
+                              </button>
+                            )}
+                            <button className="fin-action-btn open" onClick={() => handleGoToMatricule(mat.id)} title="Ouvrir la fiche matricule">
+                              <Car size={13} /> Fiche
                             </button>
                           </div>
                         </td>
@@ -468,7 +505,7 @@ export default function AdminMatriculesClients() {
         </div>
       )}
 
-      {/* ==================== STYLES (unchanged) ==================== */}
+      {/* ==================== STYLES ==================== */}
       <style>{`
         .admin-smaiti-page {
           font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -539,7 +576,7 @@ export default function AdminMatriculesClients() {
         }
         .smaiti-table {
           width: 100%; border-collapse: collapse; font-size: 0.75rem;
-          min-width: 950px;
+          min-width: 1100px;
         }
         .smaiti-table thead { background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
         .smaiti-table th {
@@ -575,6 +612,8 @@ export default function AdminMatriculesClients() {
         }
         .fin-action-btn.view { background: #eef2ff; color: #4338ca; }
         .fin-action-btn.view:hover { background: #e0e7ff; border-color: #c7d2fe; transform: translateY(-1px); }
+        .fin-action-btn.primary { background: #fef3c7; color: #b45309; }
+        .fin-action-btn.primary:hover { background: #fde68a; border-color: #f59e0b; transform: translateY(-1px); }
         .fin-action-btn.open { background: #ecfdf5; color: #047857; }
         .fin-action-btn.open:hover { background: #d1fae5; border-color: #a7f3d0; transform: translateY(-1px); }
         .modal-glass-container {
@@ -666,6 +705,21 @@ export default function AdminMatriculesClients() {
         }
         @media (max-width: 1024px) {
           .details-overview-grid { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 768px) {
+          .admin-smaiti-page { padding: 12px 16px; }
+          .smaiti-topbar { flex-direction: column; align-items: stretch; gap: 12px; }
+          .smaiti-right-actions { flex-wrap: wrap; justify-content: center; }
+          .smaiti-search-bar input { width: 120px; }
+          .smaiti-actions-wrapper { flex-direction: column; align-items: stretch; }
+          .smaiti-actions-buttons { justify-content: center; }
+          .stats-grid { grid-template-columns: repeat(2, 1fr); }
+          .fin-action-btn { font-size: 0.6rem; padding: 4px 8px; }
+        }
+        @media (max-width: 480px) {
+          .stats-grid { grid-template-columns: 1fr; }
+          .fin-action-icons { flex-direction: column; align-items: stretch; }
+          .fin-action-btn { justify-content: center; }
         }
       `}</style>
     </>

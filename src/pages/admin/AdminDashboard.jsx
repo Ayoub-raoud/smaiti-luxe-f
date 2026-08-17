@@ -3445,7 +3445,145 @@ const MatriculeCategoryCard = ({
     </div>
   );
 };
-// ==================== Component: ReserveModal (avec création de client) ====================
+// ==================== SecondDriverSearch ====================
+const SecondDriverSearch = ({ clients, selectedClientId, selectedSecondDriverId, onSelect, onCreateNew }) => {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [isNewDriver, setIsNewDriver] = useState(false);
+  const dispatch = useDispatch();
+  const [newDriverData, setNewDriverData] = useState({
+    prenom: "", nom: "", telephone: "", email: "", city: "",
+    cin_number: "", driver_license_number: ""
+  });
+  const [creatingDriver, setCreatingDriver] = useState(false);
+
+  const filteredDrivers = useMemo(() => {
+    if (!searchTerm.trim() || isNewDriver || !clients || !Array.isArray(clients)) return [];
+    const term = searchTerm.toLowerCase().trim();
+    return clients
+      .filter(client => {
+        if (!client || typeof client !== "object") return false;
+        if (selectedClientId && client.id === selectedClientId) return false;
+        const fullName = `${client.prenom || ""} ${client.nom || ""}`.toLowerCase();
+        const email = (client.email || "").toLowerCase();
+        const telephone = (client.telephone || "").toLowerCase();
+        return fullName.includes(term) || email.includes(term) || telephone.includes(term);
+      })
+      .slice(0, 10);
+  }, [searchTerm, isNewDriver, clients, selectedClientId]);
+
+  const handleSelect = (client) => {
+    onSelect(client);
+    setSearchTerm("");
+    setIsNewDriver(false);
+  };
+
+  const handleCreateNew = () => {
+    setIsNewDriver(true);
+    setNewDriverData({
+      prenom: "", nom: "", telephone: "", email: "", city: "",
+      cin_number: "", driver_license_number: ""
+    });
+  };
+
+  const handleCancelNew = () => {
+    setIsNewDriver(false);
+    setNewDriverData({
+      prenom: "", nom: "", telephone: "", email: "", city: "",
+      cin_number: "", driver_license_number: ""
+    });
+  };
+
+  const handleSaveNewDriver = async () => {
+    if (!newDriverData.prenom || !newDriverData.nom || !newDriverData.telephone) {
+      toast.error("Veuillez remplir les champs obligatoires (Prénom, Nom, Téléphone)");
+      return;
+    }
+    setCreatingDriver(true);
+    try {
+      const result = await dispatch(createClient(newDriverData)).unwrap();
+      const newClient = result.client || result;
+      toast.success("Conducteur créé avec succès");
+      onSelect(newClient);
+      setIsNewDriver(false);
+      setSearchTerm("");
+      setNewDriverData({
+        prenom: "", nom: "", telephone: "", email: "", city: "",
+        cin_number: "", driver_license_number: ""
+      });
+    } catch (error) {
+      toast.error("Erreur lors de la création du conducteur");
+    } finally {
+      setCreatingDriver(false);
+    }
+  };
+
+  if (isNewDriver) {
+    return (
+      <div className="new-driver-form" style={{ marginTop: "0.75rem", padding: "0.75rem", background: "#f8fafc", borderRadius: "0.5rem", border: "1px solid #e2e8f0" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", marginBottom: "0.5rem" }}>
+          <input type="text" className="form-control" placeholder="Prénom *" value={newDriverData.prenom} onChange={(e) => setNewDriverData(prev => ({ ...prev, prenom: e.target.value }))} />
+          <input type="text" className="form-control" placeholder="Nom *" value={newDriverData.nom} onChange={(e) => setNewDriverData(prev => ({ ...prev, nom: e.target.value }))} />
+          <input type="tel" className="form-control" placeholder="Téléphone *" value={newDriverData.telephone} onChange={(e) => setNewDriverData(prev => ({ ...prev, telephone: e.target.value }))} />
+          <input type="email" className="form-control" placeholder="Email" value={newDriverData.email} onChange={(e) => setNewDriverData(prev => ({ ...prev, email: e.target.value }))} />
+          <input type="text" className="form-control" placeholder="Ville" value={newDriverData.city} onChange={(e) => setNewDriverData(prev => ({ ...prev, city: e.target.value }))} />
+          <input type="text" className="form-control" placeholder="CIN" value={newDriverData.cin_number} onChange={(e) => setNewDriverData(prev => ({ ...prev, cin_number: e.target.value }))} />
+          <input type="text" className="form-control" placeholder="Permis" value={newDriverData.driver_license_number} onChange={(e) => setNewDriverData(prev => ({ ...prev, driver_license_number: e.target.value }))} style={{ gridColumn: "span 2" }} />
+        </div>
+        <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
+          <button type="button" className="btn btn-outline" onClick={handleCancelNew}>Annuler</button>
+          <button type="button" className="btn btn-primary" onClick={handleSaveNewDriver} disabled={creatingDriver}>
+            {creatingDriver ? "Création..." : "Créer le conducteur"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginTop: "0.5rem" }}>
+      <div style={{ position: "relative" }}>
+        <input
+          type="text"
+          className="form-control"
+          placeholder="Rechercher un conducteur par nom, email ou téléphone..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+        {filteredDrivers.length > 0 && (
+          <div className="client-list-container" style={{ maxHeight: "200px", overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: "0.5rem", marginTop: "0.25rem" }}>
+            {filteredDrivers.map(driver => (
+              <div
+                key={driver.id}
+                className={`client-list-item ${selectedSecondDriverId === driver.id ? "selected" : ""}`}
+                onClick={() => handleSelect(driver)}
+                style={{
+                  padding: "0.5rem 0.75rem",
+                  cursor: "pointer",
+                  borderBottom: "1px solid #f1f5f9",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  background: selectedSecondDriverId === driver.id ? "#fef3c7" : "transparent"
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = "#f8fafc"}
+                onMouseLeave={(e) => {
+                  if (selectedSecondDriverId !== driver.id) e.currentTarget.style.background = "transparent";
+                }}
+              >
+                <span style={{ fontWeight: 500 }}>{driver.prenom} {driver.nom}</span>
+                <span style={{ fontSize: "0.75rem", color: "#64748b" }}>{driver.telephone}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <button type="button" className="btn btn-outline" onClick={handleCreateNew} style={{ marginTop: "0.5rem", width: "100%", justifyContent: "center" }}>
+        <Plus size={14} /> Créer un nouveau conducteur
+      </button>
+    </div>
+  );
+};
+// ==================== Component: ReserveModal ====================
 const ReserveModal = ({ isOpen, onClose, matricule, clients, cars, onConfirm }) => {
   const dispatch = useDispatch();
   const sousLocations = useSelector(selectSousLocations);
@@ -3461,6 +3599,10 @@ const ReserveModal = ({ isOpen, onClose, matricule, clients, cars, onConfirm }) 
   const [status, setStatus] = useState('pending');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  // États pour le deuxième conducteur
+  const [hasSecondDriver, setHasSecondDriver] = useState(false);
+  const [secondDriverClientId, setSecondDriverClientId] = useState('');
 
   // Sous‑location
   const [sousLocationSearch, setSousLocationSearch] = useState('');
@@ -3481,14 +3623,15 @@ const ReserveModal = ({ isOpen, onClose, matricule, clients, cars, onConfirm }) 
     driver_license_number: '',
   });
 
-  // --- Réinitialisation à l'ouverture ---
+  // Réinitialisation à l'ouverture
   useEffect(() => {
     if (isOpen) {
-      // Réinitialiser les champs de recherche et sélection
       setSelectedClientId('');
       setSelectedClientName('');
       setClientSearch('');
       setShowCreateClientForm(false);
+      setHasSecondDriver(false);
+      setSecondDriverClientId('');
       setNewClientData({
         nom: '',
         prenom: '',
@@ -3498,7 +3641,6 @@ const ReserveModal = ({ isOpen, onClose, matricule, clients, cars, onConfirm }) 
         cin_number: '',
         driver_license_number: '',
       });
-      // Ne pas réinitialiser les dates, on garde les valeurs par défaut
       dispatch(fetchSousLocations());
     }
   }, [isOpen, dispatch]);
@@ -3545,7 +3687,7 @@ const ReserveModal = ({ isOpen, onClose, matricule, clients, cars, onConfirm }) 
     (sl.description && sl.description.toLowerCase().includes(sousLocationSearch.toLowerCase()))
   );
 
-  // ---- Création d'un nouveau client (avec fallback sur les données du formulaire) ----
+  // Création d'un nouveau client
   const handleCreateClient = async () => {
     if (!newClientData.nom || !newClientData.prenom || !newClientData.telephone) {
       toast.error('Veuillez remplir les champs obligatoires (Nom, Prénom, Téléphone)');
@@ -3555,9 +3697,8 @@ const ReserveModal = ({ isOpen, onClose, matricule, clients, cars, onConfirm }) 
     try {
       const result = await dispatch(createClient(newClientData)).unwrap();
       toast.success('Client créé avec succès');
-      // Utiliser les données du formulaire pour le nom (plus fiable que la réponse)
       const fullName = `${newClientData.prenom} ${newClientData.nom}`;
-      setSelectedClientId(result.id || result.data?.id); // récupérer l'ID
+      setSelectedClientId(result.id || result.data?.id);
       setSelectedClientName(fullName);
       setClientSearch(fullName);
       setShowCreateClientForm(false);
@@ -3618,6 +3759,8 @@ const ReserveModal = ({ isOpen, onClose, matricule, clients, cars, onConfirm }) 
       notes: notes,
       sous_location_id: selectedSousLocationId || null,
       rental_days: rentalDays,
+      has_second_driver: hasSecondDriver,
+      second_driver_client_id: hasSecondDriver ? secondDriverClientId : null,
     };
     setSubmitting(true);
     try {
@@ -3634,9 +3777,9 @@ const ReserveModal = ({ isOpen, onClose, matricule, clients, cars, onConfirm }) 
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal matricule-modal reserve-modal" style={{ maxWidth: '520px' }} onClick={e => e.stopPropagation()}>
+      <div className="modal" style={{ maxWidth: '520px' }} onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h2 className="modal-title"><CalendarClock size={19} /> Réserver <span className="modal-code-chip">{matricule.matricule_code}</span></h2>
+          <h2 className="modal-title"><CalendarClock size={19} /> Réserver <span style={{ fontFamily: "monospace", background: "#f1f5f9", padding: "0.15rem 0.6rem", borderRadius: "0.5rem", fontSize: "0.85rem" }}>{matricule.matricule_code}</span></h2>
           <button onClick={onClose} className="modal-close"><X size={20} /></button>
         </div>
         <form onSubmit={handleSubmit} style={{ padding: '1.5rem' }}>
@@ -3695,7 +3838,6 @@ const ReserveModal = ({ isOpen, onClose, matricule, clients, cars, onConfirm }) 
               )}
             </div>
 
-            {/* Bouton "Créer un nouveau client" — toujours visible */}
             <div style={{ marginTop: '0.5rem' }}>
               {!showCreateClientForm ? (
                 <button
@@ -3788,7 +3930,36 @@ const ReserveModal = ({ isOpen, onClose, matricule, clients, cars, onConfirm }) 
             )}
           </div>
 
-          {/* Le reste du formulaire inchangé */}
+          {/* DEUXIÈME CONDUCTEUR */}
+          <div className="form-group">
+            <label className="inline-checkbox" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={hasSecondDriver}
+                onChange={(e) => {
+                  setHasSecondDriver(e.target.checked);
+                  if (!e.target.checked) setSecondDriverClientId('');
+                }}
+              />
+              <span>Ajouter un deuxième conducteur</span>
+            </label>
+            {hasSecondDriver && (
+              <SecondDriverSearch
+                clients={clients}
+                selectedClientId={selectedClientId}
+                selectedSecondDriverId={secondDriverClientId}
+                onSelect={(client) => setSecondDriverClientId(client.id)}
+                onCreateNew={() => {}}
+              />
+            )}
+            {secondDriverClientId && (
+              <div style={{ marginTop: '0.25rem', fontSize: '0.75rem', color: '#16a34a' }}>
+                ✅ Deuxième conducteur sélectionné
+              </div>
+            )}
+          </div>
+
+          {/* Dates */}
           <div className="form-group">
             <label>Date de début</label>
             <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="form-control" required />
@@ -3805,15 +3976,20 @@ const ReserveModal = ({ isOpen, onClose, matricule, clients, cars, onConfirm }) 
             <label>Heure de fin</label>
             <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="form-control" required />
           </div>
+
+          {/* Prix */}
           <div className="form-group">
             <label>Prix total estimé</label>
-            <div className="price-display-box">
-              <Banknote size={16} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 0.9rem', background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '0.65rem', fontWeight: 700, color: '#92400e' }}>
+              <Banknote size={16} style={{ color: '#d97706' }} />
               <span>{totalPrice.toLocaleString()} DH</span>
-              <span className="price-display-days">{rentalDays} jour{rentalDays > 1 ? 's' : ''}</span>
+              <span style={{ marginLeft: 'auto', fontSize: '0.7rem', fontWeight: 600, color: '#b45309', background: 'rgba(255,255,255,0.6)', padding: '0.15rem 0.55rem', borderRadius: '1rem' }}>
+                {rentalDays} jour{rentalDays > 1 ? 's' : ''}
+              </span>
             </div>
           </div>
 
+          {/* Statut */}
           <div className="form-group">
             <label>Statut</label>
             <select value={status} onChange={(e) => setStatus(e.target.value)} className="form-control">
@@ -3823,6 +3999,7 @@ const ReserveModal = ({ isOpen, onClose, matricule, clients, cars, onConfirm }) 
             </select>
           </div>
 
+          {/* Sous‑location */}
           <div className="form-group" ref={sousRef}>
             <label>Sous‑location (optionnel)</label>
             <input
@@ -3888,6 +4065,7 @@ const ReserveModal = ({ isOpen, onClose, matricule, clients, cars, onConfirm }) 
             )}
           </div>
 
+          {/* Notes */}
           <div className="form-group">
             <label>Notes</label>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className="form-control" rows="2"></textarea>
@@ -3904,7 +4082,7 @@ const ReserveModal = ({ isOpen, onClose, matricule, clients, cars, onConfirm }) 
     </div>
   );
 };
-// ==================== Component: DirectConfirmModal (avec création de client) ====================
+// ==================== Component: DirectConfirmModal ====================
 const DirectConfirmModal = ({ isOpen, onClose, matricule, clients, cars, onConfirm }) => {
   const dispatch = useDispatch();
 
@@ -3912,12 +4090,16 @@ const DirectConfirmModal = ({ isOpen, onClose, matricule, clients, cars, onConfi
   const [selectedClientId, setSelectedClientId] = useState('');
   const [selectedClientName, setSelectedClientName] = useState('');
   const [clientSearch, setClientSearch] = useState('');
-  const [startDate, setStartDate] = useState(new Date().toISOString().slice(0,10));
-  const [endDate, setEndDate] = useState(new Date(Date.now()+7*24*60*60*1000).toISOString().slice(0,10));
-  const [startTime, setStartTime] = useState('08:00');
+  const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
+  const [endDate, setEndDate] = useState(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
+  const [startTime, setStartTime] = useState(() => new Date().toTimeString().slice(0, 5));
   const [endTime, setEndTime] = useState('18:00');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  // États pour le deuxième conducteur
+  const [hasSecondDriver, setHasSecondDriver] = useState(false);
+  const [secondDriverClientId, setSecondDriverClientId] = useState('');
 
   // Création de client
   const [showCreateClientForm, setShowCreateClientForm] = useState(false);
@@ -3932,13 +4114,16 @@ const DirectConfirmModal = ({ isOpen, onClose, matricule, clients, cars, onConfi
     driver_license_number: '',
   });
 
-  // --- Réinitialisation à l'ouverture ---
+  // Mise à jour de l'heure de début à chaque ouverture
   useEffect(() => {
     if (isOpen) {
+      setStartTime(new Date().toTimeString().slice(0, 5));
       setSelectedClientId('');
       setSelectedClientName('');
       setClientSearch('');
       setShowCreateClientForm(false);
+      setHasSecondDriver(false);
+      setSecondDriverClientId('');
       setNewClientData({
         nom: '',
         prenom: '',
@@ -3975,7 +4160,7 @@ const DirectConfirmModal = ({ isOpen, onClose, matricule, clients, cars, onConfi
       .includes(clientSearch.toLowerCase())
   );
 
-  // Création d'un nouveau client (fallback sur les données du formulaire)
+  // Création d'un nouveau client
   const handleCreateClient = async () => {
     if (!newClientData.nom || !newClientData.prenom || !newClientData.telephone) {
       toast.error('Veuillez remplir les champs obligatoires (Nom, Prénom, Téléphone)');
@@ -4046,6 +4231,8 @@ const DirectConfirmModal = ({ isOpen, onClose, matricule, clients, cars, onConfi
       status: 'confirmed',
       notes: notes,
       rental_days: rentalDays,
+      has_second_driver: hasSecondDriver,
+      second_driver_client_id: hasSecondDriver ? secondDriverClientId : null,
     };
     setSubmitting(true);
     try {
@@ -4060,12 +4247,13 @@ const DirectConfirmModal = ({ isOpen, onClose, matricule, clients, cars, onConfi
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal matricule-modal direct-confirm-modal" style={{ maxWidth: '520px' }} onClick={e => e.stopPropagation()}>
+      <div className="modal" style={{ maxWidth: '520px' }} onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h2 className="modal-title"><CheckCircle2 size={19} /> Confirmer <span className="modal-code-chip">{matricule.matricule_code}</span></h2>
+          <h2 className="modal-title"><CheckCircle2 size={19} /> Confirmer <span style={{ fontFamily: "monospace", background: "#f1f5f9", padding: "0.15rem 0.6rem", borderRadius: "0.5rem", fontSize: "0.85rem" }}>{matricule.matricule_code}</span></h2>
           <button onClick={onClose} className="modal-close"><X size={20} /></button>
         </div>
         <form onSubmit={handleSubmit} style={{ padding: '1.5rem' }}>
+          {/* Client search + création */}
           <div className="form-group">
             <label>Client *</label>
             <input
@@ -4212,6 +4400,36 @@ const DirectConfirmModal = ({ isOpen, onClose, matricule, clients, cars, onConfi
             )}
           </div>
 
+          {/* DEUXIÈME CONDUCTEUR */}
+          <div className="form-group">
+            <label className="inline-checkbox" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={hasSecondDriver}
+                onChange={(e) => {
+                  setHasSecondDriver(e.target.checked);
+                  if (!e.target.checked) setSecondDriverClientId('');
+                }}
+              />
+              <span>Ajouter un deuxième conducteur</span>
+            </label>
+            {hasSecondDriver && (
+              <SecondDriverSearch
+                clients={clients}
+                selectedClientId={selectedClientId}
+                selectedSecondDriverId={secondDriverClientId}
+                onSelect={(client) => setSecondDriverClientId(client.id)}
+                onCreateNew={() => {}}
+              />
+            )}
+            {secondDriverClientId && (
+              <div style={{ marginTop: '0.25rem', fontSize: '0.75rem', color: '#16a34a' }}>
+                ✅ Deuxième conducteur sélectionné
+              </div>
+            )}
+          </div>
+
+          {/* Dates */}
           <div className="form-group">
             <label>Date de début</label>
             <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="form-control" required />
@@ -4228,14 +4446,20 @@ const DirectConfirmModal = ({ isOpen, onClose, matricule, clients, cars, onConfi
             <label>Heure de fin</label>
             <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="form-control" required />
           </div>
+
+          {/* Prix */}
           <div className="form-group">
             <label>Prix total</label>
-            <div className="price-display-box">
-              <Banknote size={16} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 0.9rem', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '0.65rem', fontWeight: 700, color: '#166534' }}>
+              <Banknote size={16} style={{ color: '#16a34a' }} />
               <span>{totalPrice.toLocaleString()} DH</span>
-              <span className="price-display-days">{rentalDays} jour{rentalDays > 1 ? 's' : ''}</span>
+              <span style={{ marginLeft: 'auto', fontSize: '0.7rem', fontWeight: 600, color: '#15803d', background: 'rgba(255,255,255,0.6)', padding: '0.15rem 0.55rem', borderRadius: '1rem' }}>
+                {rentalDays} jour{rentalDays > 1 ? 's' : ''}
+              </span>
             </div>
           </div>
+
+          {/* Notes */}
           <div className="form-group">
             <label>Notes</label>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className="form-control" rows="2"></textarea>

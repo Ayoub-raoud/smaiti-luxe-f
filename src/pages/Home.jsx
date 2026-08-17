@@ -231,6 +231,25 @@ export default function Home() {
     }
   ];
 
+  // ---------- BRAND MARQUEE FIX ----------
+  // Duplicate the brand list enough times to ensure seamless scrolling,
+  // especially when there are very few brands.
+  const getDuplicatedBrands = (groups) => {
+    if (groups.length === 0) return [];
+    // Use 4 copies when we have 3 or fewer brands,
+    // otherwise 2 copies are enough.
+    const copies = groups.length <= 3 ? 4 : 2;
+    let result = [];
+    for (let i = 0; i < copies; i++) {
+      result = result.concat(groups);
+    }
+    return result;
+  };
+
+  const duplicatedBrands = getDuplicatedBrands(brandGroups);
+  // Slower animation for fewer brands to keep it pleasant
+  const marqueeDuration = brandGroups.length <= 3 ? 30 : 15;
+
   return (
     <>
       <style>{`
@@ -1180,8 +1199,11 @@ export default function Home() {
             </FadeIn>
 
             {brandGroups.length > 0 && (
-              <div className="brand-marquee-track">
-                {[...brandGroups, ...brandGroups].map(({ brand, count }, index) => {
+              <div 
+                className="brand-marquee-track"
+                style={{ animationDuration: `${marqueeDuration}s` }}
+              >
+                {duplicatedBrands.map(({ brand, count }, index) => {
                   const logoUrl = getBrandLogoUrl(brand);
                   const hasError = brandLogoErrors[brand];
                   return (

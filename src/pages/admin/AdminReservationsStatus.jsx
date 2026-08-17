@@ -2020,14 +2020,14 @@ const ContractViewPage = ({ reservation, onClose, currentUser, clients }) => {
   };
   const handleResetAllOptions = () => {
     setContractDisplayOptions({
-      prices: "show",
+      prices: "dash",
       clientInfo: "show",
       secondDriver: "show",
       vehicleInfo: "show",
       deliveryReception: "show",
       rentalDates: "show",
       kilometrage: "show",
-      rentalDays: "show",
+      rentalDays: "dash",
       observations: "show",
       insurance: "show",
       depositGuarantee: "show",
@@ -2255,8 +2255,8 @@ export default function AdminReservationsStatus() {
     vignette: true, visiteTechnique: true, autorisation: true
   });
   const [contractDisplayOptions, setContractDisplayOptions] = useState({
-    prices: "show", clientInfo: "show", secondDriver: "show",
-    vehicleInfo: "show", deliveryReception: "show", rentalDates: "show",
+    prices: "dash", clientInfo: "show", secondDriver: "show",
+    vehicleInfo: "show", deliveryReception: "show", rentalDates: "dash",
     kilometrage: "show", rentalDays: "show", observations: "show",
     insurance: "show", depositGuarantee: "show", signatures: "show"
   });

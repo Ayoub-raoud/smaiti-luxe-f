@@ -20,15 +20,15 @@ import {
 
 export default function AdminMatricules() {
   const dispatch = useDispatch();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filterParam = searchParams.get('filter');
+  const focusParam = searchParams.get('focus');
+
   const matricules = useSelector(selectMatricules);
   const cars = useSelector(selectCars);
   const loading = useSelector(selectMatriculesLoading);
   const reservations = useSelector(selectReservations);
   const clients = useSelector(selectClients);
-
-  // URL search params for filtering
-  const [searchParams] = useSearchParams();
-  const filterParam = searchParams.get('filter');
 
   // UI state
   const [showMatriculeForm, setShowMatriculeForm] = useState(false);
@@ -41,6 +41,7 @@ export default function AdminMatricules() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Accident inline form state
   const [showAccidentForm, setShowAccidentForm] = useState(false);
@@ -87,7 +88,7 @@ export default function AdminMatricules() {
   const [additionalItemNotes, setAdditionalItemNotes] = useState('');
 
   const [itemsPerPage, setItemsPerPage] = useState(10);
-  
+
   // Car search state for the form
   const [carSearchTerm, setCarSearchTerm] = useState("");
   const [selectedCar, setSelectedCar] = useState(null);
@@ -105,6 +106,24 @@ export default function AdminMatricules() {
     vidange_status: "not done"
   });
 
+  // ===== FOCUS FROM URL PARAMETER =====
+  useEffect(() => {
+    if (focusParam && matricules.length > 0) {
+      const found = matricules.find(m => m.id === parseInt(focusParam));
+      if (found) {
+        setSearchTerm(found.matricule_code);
+        setCurrentPage(1);
+        setSelectedMatricule(found);
+        setShowMatriculeDetails(true);
+        setSearchParams({});
+      } else {
+        toast.warning(`Matricule #${focusParam} non trouvé`);
+        setSearchParams({});
+      }
+    }
+  }, [focusParam, matricules, setSearchParams]);
+
+  // Chargement initial
   useEffect(() => {
     loadData();
     dispatch(fetchReservations());
@@ -119,13 +138,16 @@ export default function AdminMatricules() {
   };
 
   const refreshData = async () => {
+    setRefreshing(true);
     await dispatch(refreshMatricules());
     await dispatch(fetchCars());
     await dispatch(fetchClients());
     await dispatch(fetchReservations());
+    setRefreshing(false);
     toast.success("Données actualisées");
   };
 
+  // Helper to format date to YYYY-MM-DD
   const formatDateForInput = (dateString) => {
     if (!dateString) return "";
     try {
@@ -137,6 +159,7 @@ export default function AdminMatricules() {
     }
   };
 
+  // Mettre à jour localement le matricule sélectionné sans refresh global
   const updateLocalMatricule = (updatedData) => {
     setSelectedMatricule(prev => ({
       ...prev,
@@ -144,18 +167,19 @@ export default function AdminMatricules() {
     }));
   };
 
+  // Helper to check if a matricule has any notification (expired or upcoming documents)
   const hasMatriculeNotification = (mat) => {
     const visitTech = mat.visit_tech ? new Date(mat.visit_tech) : null;
     const assurance = mat.date_assurance ? new Date(mat.date_assurance) : null;
     const today = new Date();
-    today.setHours(0,0,0,0);
-    
+    today.setHours(0, 0, 0, 0);
+
     const isVisitTechExpired = visitTech && visitTech < today;
-    const isVisitTechSoon = visitTech && (visitTech - today) / (1000*60*60*24) <= 7 && visitTech >= today;
-    
+    const isVisitTechSoon = visitTech && (visitTech - today) / (1000 * 60 * 60 * 24) <= 7 && visitTech >= today;
+
     const isAssuranceExpired = assurance && assurance < today;
-    const isAssuranceSoon = assurance && (assurance - today) / (1000*60*60*24) <= 7 && assurance >= today;
-    
+    const isAssuranceSoon = assurance && (assurance - today) / (1000 * 60 * 60 * 24) <= 7 && assurance >= today;
+
     return isVisitTechExpired || isVisitTechSoon || isAssuranceExpired || isAssuranceSoon;
   };
 
@@ -733,11 +757,11 @@ export default function AdminMatricules() {
     switch (sortField) {
       case "id": aVal = a.id; bVal = b.id; break;
       case "matricule": aVal = a.matricule_code?.toLowerCase() || ""; bVal = b.matricule_code?.toLowerCase() || ""; break;
-      case "car": 
-        const aCar = cars.find(c => c.id === a.car_id); 
-        const bCar = cars.find(c => c.id === b.car_id); 
-        aVal = aCar ? `${aCar.brand} ${aCar.model}`.toLowerCase() : ""; 
-        bVal = bCar ? `${bCar.brand} ${bCar.model}`.toLowerCase() : ""; 
+      case "car":
+        const aCar = cars.find(c => c.id === a.car_id);
+        const bCar = cars.find(c => c.id === b.car_id);
+        aVal = aCar ? `${aCar.brand} ${aCar.model}`.toLowerCase() : "";
+        bVal = bCar ? `${bCar.brand} ${bCar.model}`.toLowerCase() : "";
         break;
       case "kilometrage": aVal = a.kilometrage || 0; bVal = b.kilometrage || 0; break;
       case "status": aVal = a.status || ""; bVal = b.status || ""; break;
@@ -911,7 +935,7 @@ export default function AdminMatricules() {
 
   return (
     <>
-      {/* --- REDESIGNED ACCIDENT FORM MODAL --- */}
+      {/* --- ACCIDENT FORM MODAL --- */}
       {showAccidentForm && selectedMatriculeForAccident ? (
         <div className="modal-glass-container">
           <div className="modal-header-hero accident-hero">
@@ -1087,7 +1111,7 @@ export default function AdminMatricules() {
           </form>
         </div>
       ) : showMatriculeForm ? (
-        /* --- REDESIGNED MATRICULE ADD/EDIT MODAL --- */
+        /* --- MATRICULE ADD/EDIT MODAL --- */
         <div className="modal-glass-container">
           <div className="modal-header-hero primary-hero">
             <div className="hero-left">
@@ -1123,21 +1147,21 @@ export default function AdminMatricules() {
                   <div className="input-group-row">
                     <div className="field-block">
                       <label>Code Matricule *</label>
-                      <input 
-                        type="text" 
-                        className="styled-input" 
-                        value={formData.matricule_code} 
-                        onChange={(e) => setFormData({...formData, matricule_code: e.target.value})} 
-                        required 
+                      <input
+                        type="text"
+                        className="styled-input"
+                        value={formData.matricule_code}
+                        onChange={(e) => setFormData({ ...formData, matricule_code: e.target.value })}
+                        required
                         placeholder="Ex: 12345-A-6"
                       />
                     </div>
                     <div className="field-block">
                       <label>Statut Actuel</label>
-                      <select 
-                        className="styled-select" 
-                        value={formData.status} 
-                        onChange={(e) => setFormData({...formData, status: e.target.value})}
+                      <select
+                        className="styled-select"
+                        value={formData.status}
+                        onChange={(e) => setFormData({ ...formData, status: e.target.value })}
                       >
                         <option value="active">Actif</option>
                         <option value="inactive">Inactif</option>
@@ -1192,19 +1216,19 @@ export default function AdminMatricules() {
                   <div className="input-group-row">
                     <div className="field-block">
                       <label>Kilométrage actuel (km)</label>
-                      <input 
-                        type="number" 
-                        className="styled-input" 
-                        value={formData.kilometrage} 
-                        onChange={(e) => setFormData({...formData, kilometrage: parseInt(e.target.value) || 0})} 
+                      <input
+                        type="number"
+                        className="styled-input"
+                        value={formData.kilometrage}
+                        onChange={(e) => setFormData({ ...formData, kilometrage: parseInt(e.target.value) || 0 })}
                       />
                     </div>
                     <div className="field-block">
                       <label>Statut Vidange</label>
-                      <select 
-                        className="styled-select" 
-                        value={formData.vidange_status} 
-                        onChange={(e) => setFormData({...formData, vidange_status: e.target.value})}
+                      <select
+                        className="styled-select"
+                        value={formData.vidange_status}
+                        onChange={(e) => setFormData({ ...formData, vidange_status: e.target.value })}
                       >
                         <option value="done">Effectuée</option>
                         <option value="not done">À effectuer</option>
@@ -1221,30 +1245,30 @@ export default function AdminMatricules() {
                   <div className="input-group-row">
                     <div className="field-block">
                       <label>Visite Technique</label>
-                      <input 
-                        type="date" 
-                        className="styled-input" 
-                        value={formData.visit_tech} 
-                        onChange={(e) => setFormData({...formData, visit_tech: e.target.value})} 
+                      <input
+                        type="date"
+                        className="styled-input"
+                        value={formData.visit_tech}
+                        onChange={(e) => setFormData({ ...formData, visit_tech: e.target.value })}
                       />
                     </div>
                     <div className="field-block">
                       <label>Expiration Assurance</label>
-                      <input 
-                        type="date" 
-                        className="styled-input" 
-                        value={formData.date_assurance} 
-                        onChange={(e) => setFormData({...formData, date_assurance: e.target.value})} 
+                      <input
+                        type="date"
+                        className="styled-input"
+                        value={formData.date_assurance}
+                        onChange={(e) => setFormData({ ...formData, date_assurance: e.target.value })}
                       />
                     </div>
                   </div>
                   <div className="field-block" style={{ marginTop: '12px' }}>
                     <label>Expiration Vignette / Taxe</label>
-                    <input 
-                      type="date" 
-                      className="styled-input" 
-                      value={formData.date_taxe_voiture} 
-                      onChange={(e) => setFormData({...formData, date_taxe_voiture: e.target.value})} 
+                    <input
+                      type="date"
+                      className="styled-input"
+                      value={formData.date_taxe_voiture}
+                      onChange={(e) => setFormData({ ...formData, date_taxe_voiture: e.target.value })}
                     />
                   </div>
                 </div>
@@ -1262,7 +1286,7 @@ export default function AdminMatricules() {
           </form>
         </div>
       ) : showMatriculeDetails && selectedMatricule ? (
-        /* --- REDESIGNED MATRICULE DETAILS VIEW --- */
+        /* --- MATRICULE DETAILS VIEW --- */
         <div className="modal-glass-container">
           <div className="modal-header-hero info-hero">
             <div className="hero-left">
@@ -1554,11 +1578,11 @@ export default function AdminMatricules() {
               <div className="smaiti-right-actions">
                 <div className="smaiti-search-bar">
                   <Search size={16} />
-                  <input 
-                    type="text" 
-                    placeholder="Rechercher plaque/voiture..." 
-                    value={searchTerm} 
-                    onChange={(e) => setSearchTerm(e.target.value)} 
+                  <input
+                    type="text"
+                    placeholder="Rechercher plaque/voiture..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
                   />
                 </div>
                 <button className="smaiti-notif-btn"><Bell size={16} /></button>
@@ -1588,7 +1612,7 @@ export default function AdminMatricules() {
             <div className="smaiti-actions-wrapper">
               <span className="smaiti-count">{filteredMatricules.length} enregistrement(s)</span>
               <div className="smaiti-actions-buttons">
-                <select 
+                <select
                   className="status-select-filter"
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
@@ -1602,6 +1626,16 @@ export default function AdminMatricules() {
                 <button onClick={handleAddNew} className="btn btn-primary"><Plus size={14} /> Ajouter matricule</button>
               </div>
             </div>
+
+            {/* FILTER INDICATOR */}
+            {filterParam === 'notifications' && (
+              <div className="filter-indicator">
+                <span className="filter-indicator-text">🔔 Affichage des notifications uniquement</span>
+                <button onClick={() => setSearchParams({})} className="clear-filter-btn">
+                  <X size={16} /> Effacer le filtre
+                </button>
+              </div>
+            )}
 
             <div className="smaiti-table-container">
               <table className="smaiti-table">
@@ -1628,7 +1662,7 @@ export default function AdminMatricules() {
                     const vidangeProgress = calculateRequiredTasksProgress(mat);
 
                     return (
-                      <tr key={mat.id}>
+                      <tr key={mat.id} id={`matricule-${mat.id}`}>
                         <td style={{ fontWeight: 500 }}>#{mat.id}</td>
                         <td style={{ fontWeight: 600, color: '#0f172a' }}>{mat.matricule_code}</td>
                         <td>{car ? `${car.brand} ${car.model}` : 'Non assigné'}</td>
@@ -1735,7 +1769,7 @@ export default function AdminMatricules() {
         .smaiti-brand { font-family: 'Georgia', serif; color: #b6926e; font-size: 1.5rem; font-weight: 600; letter-spacing: 1px; }
         .smaiti-flotte { font-size: 1.8rem; font-weight: 700; color: #0f172a; }
         .smaiti-right-actions { display: flex; align-items: center; gap: 16px; }
-        
+
         .smaiti-search-bar {
           display: flex; align-items: center; background: white;
           border-radius: 40px; padding: 8px 16px; border: 1px solid #e2e8f0;
@@ -1774,7 +1808,7 @@ export default function AdminMatricules() {
         }
         .smaiti-count { font-size: 0.875rem; color: #475569; }
         .smaiti-actions-buttons { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-        
+
         .btn { display: inline-flex; align-items: center; gap: 0.5rem; height: 2.5rem; padding: 0 1rem; border-radius: 9999px; border: none; cursor: pointer; font-size: 0.875rem; font-weight: 500; transition: all 0.2s; }
         .btn-secondary { background: white; border: 1px solid #e2e8f0; color: #0f172a; }
         .btn-secondary:hover { background: #f8fafc; }
@@ -1788,8 +1822,8 @@ export default function AdminMatricules() {
 
         .smaiti-table-container {
           background: white; border-radius: 12px;
-          border: 1px solid #e2e8f0; 
-          overflow-x: auto; 
+          border: 1px solid #e2e8f0;
+          overflow-x: auto;
           overflow-y: visible;
           -webkit-overflow-scrolling: touch;
         }
@@ -2013,6 +2047,8 @@ export default function AdminMatricules() {
         }
         .btn-modal-danger:hover { background: #b91c1c; transform: translateY(-1px); }
 
+        .btn-modal-primary.compact { padding: 6px 12px; font-size: 0.75rem; border-radius: 6px; }
+
         /* Details Modal View Formatting */
         .modal-body-details { padding: 24px 32px; }
         .details-overview-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
@@ -2066,7 +2102,6 @@ export default function AdminMatricules() {
 
         .mini-form-popover { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #e2e8f0; }
         .styled-input.compact { padding: 6px; font-size: 0.75rem; }
-        .btn-modal-primary.compact { padding: 6px 12px; font-size: 0.75rem; border-radius: 6px; }
 
         .additional-row-item {
           display: flex; justify-content: space-between; align-items: center;
@@ -2083,9 +2118,70 @@ export default function AdminMatricules() {
         .modal-btn-cancel { flex: 1; background: #f1f5f9; border: none; padding: 10px; border-radius: 40px; cursor: pointer; font-weight: 500; }
         .modal-btn-delete { flex: 1; background: #dc2626; color: white; border: none; padding: 10px; border-radius: 40px; cursor: pointer; font-weight: 500; }
 
+        .filter-indicator {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          background: #fef3c7;
+          border: 1px solid #f59e0b;
+          border-radius: 0.75rem;
+          padding: 0.75rem 1rem;
+          margin-bottom: 1rem;
+          flex-wrap: wrap;
+          gap: 0.5rem;
+        }
+        .filter-indicator-text {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          font-size: 0.875rem;
+          font-weight: 500;
+          color: #92400e;
+        }
+        .clear-filter-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.25rem;
+          background: none;
+          border: 1px solid #92400e;
+          padding: 0.25rem 0.75rem;
+          border-radius: 2rem;
+          font-size: 0.75rem;
+          font-weight: 500;
+          color: #92400e;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .clear-filter-btn:hover {
+          background: #92400e;
+          color: white;
+        }
+
         @media (max-width: 1024px) {
           .modal-grid-2 { grid-template-columns: 1fr; }
           .details-overview-grid { grid-template-columns: 1fr; }
+          .admin-smaiti-page { padding: 12px 16px; }
+          .smaiti-topbar { flex-direction: column; align-items: stretch; gap: 12px; }
+          .smaiti-right-actions { flex-wrap: wrap; justify-content: center; }
+          .smaiti-search-bar input { width: 120px; }
+        }
+        @media (max-width: 768px) {
+          .admin-smaiti-page { padding: 8px 10px; }
+          .stats-grid { grid-template-columns: 1fr 1fr; }
+          .smaiti-table { font-size: 0.65rem; min-width: 700px; }
+          .smaiti-table th, .smaiti-table td { padding: 6px 6px; }
+          .modal-glass-container { margin: 0.5rem; border-radius: 12px; }
+          .modal-header-hero { padding: 16px; flex-wrap: wrap; }
+          .hero-left { flex-wrap: wrap; }
+          .hero-text h2 { font-size: 1rem; }
+          .modal-body-form { padding: 16px; }
+          .input-group-row { grid-template-columns: 1fr; }
+          .details-row { grid-template-columns: 1fr; gap: 0.25rem; }
+        }
+        @media (max-width: 480px) {
+          .stats-grid { grid-template-columns: 1fr; }
+          .smaiti-search-bar input { width: 100px; }
+          .smaiti-actions-buttons .btn { font-size: 0.7rem; padding: 0 0.5rem; height: 2rem; }
         }
       `}</style>
     </>
