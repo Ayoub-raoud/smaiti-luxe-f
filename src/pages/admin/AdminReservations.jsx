@@ -37,7 +37,7 @@ import checklistImage from "../../assets/Checklist.png";
 import logoImage from "../../assets/logo.png";
 import agentSignatureImage from "../../assets/cache.png";
 
-// Mapping of color names to CSS color values
+// ========== HELPERS ==========
 const getColorValue = (colorName) => {
   const colorMap = {
     "Bleu": "#0000FF", "Rouge": "#FF0000", "Blanc": "#FFFFFF",
@@ -56,6 +56,18 @@ const getColorValue = (colorName) => {
     "ذهبي": "#FFD700"
   };
   return colorMap[colorName] || colorName;
+};
+
+const getUserDisplayName = (user) => {
+  if (!user) return "—";
+  return user.Fullname || user.fullname || user.name || user.username || "—";
+};
+
+const buildReceptionNotesJSON = (reservation, currentUser) => {
+  return JSON.stringify({
+    livre_par: getUserDisplayName(currentUser),
+    receptionne_par: reservation?.created_by || "—"
+  });
 };
 
 const downloadAndOpenPDF = (doc, filename) => {
@@ -89,18 +101,6 @@ const addImageFittedToPage = (doc, imgData, canvas, margin = 10) => {
   const yOffset = margin + (availableHeight - imgHeight) / 2;
 
   doc.addImage(imgData, "PNG", xOffset, yOffset, imgWidth, imgHeight);
-};
-
-const getUserDisplayName = (user) => {
-  if (!user) return "—";
-  return user.Fullname || user.fullname || user.name || user.username || "—";
-};
-
-const buildReceptionNotesJSON = (reservation, currentUser) => {
-  return JSON.stringify({
-    livre_par: getUserDisplayName(currentUser),
-    receptionne_par: reservation?.created_by || "—"
-  });
 };
 
 // ==================== ContractDisplayOptions ====================
@@ -907,13 +907,17 @@ const ReservationForm = ({
 
   const sousLocations = useSelector(selectSousLocations);
 
-  // ---------- État du formulaire ----------
+  // États principaux
+  const [baseDays, setBaseDays] = useState(1);           // jours de base (affichés dans "Nombre de jours")
+  const [prolongationDays, setProlongationDays] = useState(0); // jours supplémentaires
+  const [totalDays, setTotalDays] = useState(1);        // baseDays + prolongationDays (utilisé pour le calcul)
+  const [dailyRate, setDailyRate] = useState(0);
+
   const [formData, setFormData] = useState({
     start_date: new Date().toISOString().split("T")[0],
     end_date: "",
     start_time: "08:00",
     end_time: "18:00",
-    rental_days: 1,
     total_price: 0,
     amount_paid: 0,
     remaining_amount: 0,
@@ -929,10 +933,9 @@ const ReservationForm = ({
     kilometrage_entree: "",
     sous_location_id: "",
     can_extend_days: false,
-    prolongation_days: 0,
   });
 
-  // ---------- Autres états ----------
+  // Autres états (recherches, paiements, etc.)
   const [clientSearch, setClientSearch] = useState("");
   const [isNewClient, setIsNewClient] = useState(false);
   const [carMatricules, setCarMatricules] = useState([]);
@@ -952,6 +955,7 @@ const ReservationForm = ({
     cin_number: "", driver_license_number: "", date_naissance: "",
     lieu_naissance: "", cin_delivre_le: "", permis_delivre_le: ""
   });
+
   const [showCreateSousLocationModal, setShowCreateSousLocationModal] = useState(false);
   const [newSousLocationName, setNewSousLocationName] = useState('');
   const [newSousLocationDesc, setNewSousLocationDesc] = useState('');
@@ -959,93 +963,262 @@ const ReservationForm = ({
   const [isClientDropdownOpen, setIsClientDropdownOpen] = useState(false);
   const [isMatriculeDropdownOpen, setIsMatriculeDropdownOpen] = useState(false);
 
-  // ---------- Filtrage des clients ----------
+  // ---------- REF TO BREAK INFINITE LOOP ----------
+  const isUpdatingFromRate = useRef(false);
+
+  // ------- FILTRES -------
   const filteredClients = useMemo(() => {
     if (!clientSearch.trim() || isNewClient || !clients || !Array.isArray(clients)) return [];
-    const searchTerm = clientSearch.toLowerCase().trim();
+    const term = clientSearch.toLowerCase().trim();
     return clients
       .filter(client => {
         if (!client || typeof client !== "object") return false;
         const fullName = `${client.prenom || ""} ${client.nom || ""}`.toLowerCase();
         const email = (client.email || "").toLowerCase();
         const telephone = (client.telephone || "").toLowerCase();
-        return fullName.includes(searchTerm) || email.includes(searchTerm) || telephone.includes(searchTerm);
+        return fullName.includes(term) || email.includes(term) || telephone.includes(term);
       })
       .slice(0, 10);
   }, [clientSearch, isNewClient, clients]);
 
-  // ---------- CORRECTION : synchronisation des dates et jours ----------
-  const computeDays = (start, end) => {
-    if (!start || !end) return 1;
-    const s = new Date(start);
-    const e = new Date(end);
-    s.setHours(0, 0, 0, 0);
-    e.setHours(0, 0, 0, 0);
-    const diff = Math.ceil((e - s) / (1000 * 60 * 60 * 24));
-    return diff > 0 ? diff : 1;
-  };
-
-  // Quand start_date ou end_date change => recalculer rental_days
   useEffect(() => {
-    if (formData.start_date && formData.end_date) {
-      const days = computeDays(formData.start_date, formData.end_date);
-      setFormData(prev => ({ ...prev, rental_days: days }));
+    if (!matriculeSearch.trim() || !matricules || !Array.isArray(matricules)) {
+      setFilteredMatricules([]);
+      return;
     }
-  }, [formData.start_date, formData.end_date]);
+    const term = matriculeSearch.toLowerCase().trim();
+    const filtered = matricules
+      .filter(mat => {
+        if (!mat || typeof mat !== "object") return false;
+        if (mat.status === 'sold') return false;
+        return (mat.matricule_code || "").toLowerCase().includes(term);
+      })
+      .slice(0, 10);
+    setFilteredMatricules(filtered);
+  }, [matriculeSearch, matricules]);
 
-  // Quand start_date ou rental_days change => mettre à jour end_date
+  // ------- CHARGEMENT EN ÉDITION -------
   useEffect(() => {
-    if (formData.start_date && formData.rental_days && formData.rental_days > 0) {
-      const start = new Date(formData.start_date);
-      const end = new Date(start);
-      end.setDate(start.getDate() + formData.rental_days);
-      const endStr = end.toISOString().split('T')[0];
-      if (endStr !== formData.end_date) {
-        setFormData(prev => ({ ...prev, end_date: endStr }));
+    if (editingReservation) {
+      const computeRentalDays = (start, end) => {
+        if (!start || !end) return 1;
+        const startDate = new Date(start);
+        const endDate = new Date(end);
+        startDate.setHours(0,0,0,0);
+        endDate.setHours(0,0,0,0);
+        const diff = Math.ceil((endDate - startDate) / (1000*60*60*24));
+        return diff === 0 ? 1 : diff;
+      };
+
+      const total = editingReservation.rental_days || editingReservation.total_days ||
+                   (editingReservation.start_date && editingReservation.end_date
+                     ? computeRentalDays(editingReservation.start_date, editingReservation.end_date)
+                     : 1);
+      const prolong = editingReservation.prolongation_days || 0;
+      const base = total - prolong;
+
+      setBaseDays(base > 0 ? base : 1);
+      setProlongationDays(prolong);
+      setTotalDays(total);
+
+      setFormData({
+        start_date: editingReservation.start_date?.split("T")[0] || "",
+        end_date: editingReservation.end_date?.split("T")[0] || "",
+        start_time: editingReservation.start_time || "08:00",
+        end_time: editingReservation.end_time || "18:00",
+        total_price: editingReservation.total_price || 0,
+        amount_paid: editingReservation.amount_paid || 0,
+        remaining_amount: editingReservation.remaining_amount || 0,
+        status: editingReservation.status || "pending",
+        car_id: editingReservation.car_id || "",
+        client_id: editingReservation.client_id || "",
+        matricule_id: editingReservation.matricule_id || "",
+        has_second_driver: editingReservation.has_second_driver || false,
+        second_driver_client_id: editingReservation.second_driver_client_id || "",
+        notes: editingReservation.notes || "",
+        reception_notes: editingReservation.reception_notes || "",
+        kilometrage_sortie: editingReservation.kilometrage_sortie || "",
+        kilometrage_entree: editingReservation.kilometrage_entree || "",
+        sous_location_id: editingReservation.sous_location_id || "",
+        can_extend_days: editingReservation.can_extend_days || false,
+      });
+      setPaymentHistory(
+        Array.isArray(editingReservation.payment_history)
+          ? editingReservation.payment_history
+          : []
+      );
+      if (editingReservation.total_price && total > 0) {
+        setDailyRate(editingReservation.total_price / total);
+      }
+      if (editingReservation.client_id) {
+        const client = clients.find(c => c.id === editingReservation.client_id);
+        if (client) {
+          setSelectedClient(client);
+          setClientSearch(`${client.prenom} ${client.nom}`);
+        }
+      }
+      if (editingReservation.matricule_id) {
+        const mat = matricules.find(m => m.id === editingReservation.matricule_id);
+        if (mat) {
+          setSelectedMatricule(mat);
+          setMatriculeSearch(mat.matricule_code);
+          if (mat.car_id) {
+            setFormData(prev => ({ ...prev, car_id: mat.car_id }));
+          }
+        }
       }
     }
-  }, [formData.start_date, formData.rental_days]);
+  }, [editingReservation, clients, matricules]);
 
-  // ---------- Gestionnaires (corrigés) ----------
-  const handleStartDateChange = (value) => {
-  setFormData(prev => ({ ...prev, start_date: value }));
-  if (value && formData.rental_days) {
-    const start = new Date(value);
-    const end = new Date(start);
-    end.setDate(start.getDate() + formData.rental_days);
-    setFormData(prev => ({ ...prev, end_date: end.toISOString().split("T")[0] }));
-  }
-};
+  // ------- MATRICULES PAR VOITURE -------
+  useEffect(() => {
+    if (formData.car_id) {
+      setCarMatricules(matricules.filter(m => m.car_id == formData.car_id));
+    } else {
+      setCarMatricules([]);
+    }
+  }, [formData.car_id, matricules]);
 
-const handleEndDateChange = (value) => {
-  setFormData(prev => ({ ...prev, end_date: value }));
-  if (formData.start_date && value) {
-    const start = new Date(formData.start_date);
-    const end = new Date(value);
-    const diffTime = Math.abs(end - start);
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    setFormData(prev => ({ ...prev, rental_days: diffDays === 0 ? 1 : diffDays }));
-  }
-};
+  // ------- KILOMÉTRAGE SORTIE AUTO -------
+  useEffect(() => {
+    if (formData.matricule_id) {
+      const mat = matricules.find(m => m.id == formData.matricule_id);
+      if (mat && (!formData.kilometrage_sortie || formData.kilometrage_sortie === "")) {
+        setFormData(prev => ({ ...prev, kilometrage_sortie: mat.kilometrage }));
+      }
+    }
+  }, [formData.matricule_id, matricules]);
 
-const handleRentalDaysChange = (value) => {
-  if (value === '') {
-    setFormData(prev => ({ ...prev, rental_days: null }));
-    return;
-  }
-  const days = parseInt(value, 10);
-  if (!isNaN(days) && days >= 1) {
-    setFormData(prev => ({ ...prev, rental_days: days }));
+  // ------- SOUS-LOCATIONS -------
+  useEffect(() => {
+    if (isOpen) dispatch(fetchSousLocations());
+  }, [isOpen, dispatch]);
+
+  // ========== LOGIQUE dailyRate & totalDays ==========
+  // Mise à jour du totalDays chaque fois que baseDays ou prolongationDays change
+  useEffect(() => {
+    const newTotal = baseDays + prolongationDays;
+    setTotalDays(newTotal);
+    // Recalculer le prix total avec le dailyRate actuel
+    if (dailyRate > 0) {
+      // Mark that we are updating total_price from dailyRate
+      isUpdatingFromRate.current = true;
+      setFormData(prev => ({ ...prev, total_price: dailyRate * newTotal }));
+    }
+    // Mettre à jour la date de fin
     if (formData.start_date) {
       const start = new Date(formData.start_date);
       const end = new Date(start);
-      end.setDate(start.getDate() + days);
+      end.setDate(start.getDate() + newTotal);
       setFormData(prev => ({ ...prev, end_date: end.toISOString().split('T')[0] }));
     }
-  }
-};
+  }, [baseDays, prolongationDays, dailyRate, formData.start_date]);
 
-  // ---------- Gestionnaires clients ----------
+  // Reset the flag after total_price has been updated from dailyRate
+  useEffect(() => {
+    if (isUpdatingFromRate.current) {
+      const timer = setTimeout(() => {
+        isUpdatingFromRate.current = false;
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [formData.total_price]);
+
+  // 1) Quand le véhicule change → on récupère le prix et on met à jour dailyRate
+  useEffect(() => {
+    if (!editingReservation && formData.car_id) {
+      const car = cars.find(c => c.id == formData.car_id);
+      if (car) {
+        const rate = car.price_per_day || 0;
+        setDailyRate(rate);
+        // Le prix total sera recalculé par l'effet ci-dessus (qui dépend de dailyRate)
+      }
+    }
+  }, [formData.car_id, cars, editingReservation]);
+
+  // 2) Quand l'utilisateur modifie le total manuellement → on recalcule dailyRate
+  // BUT only if the update did NOT come from the other effect (isUpdatingFromRate)
+  useEffect(() => {
+    // Skip if we are currently updating total_price from dailyRate
+    if (isUpdatingFromRate.current) return;
+    
+    if (totalDays > 0 && formData.total_price > 0) {
+      const rate = formData.total_price / totalDays;
+      setDailyRate(rate);
+    }
+  }, [formData.total_price, totalDays]);
+
+  // ========== GESTIONNAIRES ==========
+  const handleStartDateChange = (value) => {
+    setFormData(prev => ({ ...prev, start_date: value }));
+    if (value && totalDays) {
+      const start = new Date(value);
+      const end = new Date(start);
+      end.setDate(start.getDate() + totalDays);
+      setFormData(prev => ({ ...prev, end_date: end.toISOString().split("T")[0] }));
+    }
+  };
+
+  const handleEndDateChange = (value) => {
+    setFormData(prev => ({ ...prev, end_date: value }));
+    if (formData.start_date && value) {
+      const start = new Date(formData.start_date);
+      const end = new Date(value);
+      const diff = Math.ceil((end - start) / (1000*60*60*24));
+      const days = diff === 0 ? 1 : diff;
+      // On ajuste baseDays et prolongationDays
+      const newBase = days - prolongationDays;
+      setBaseDays(newBase > 0 ? newBase : 1);
+    }
+  };
+
+  // Modification du champ "Nombre de jours" (base)
+  const handleBaseDaysChange = (value) => {
+    if (value === '') {
+      setBaseDays(null);
+      return;
+    }
+    const days = parseInt(value, 10);
+    if (!isNaN(days) && days >= 1) {
+      setBaseDays(days);
+    }
+  };
+
+  // Prolongation : activation/désactivation
+  const handleProlongationToggle = (checked) => {
+    setFormData(prev => ({ ...prev, can_extend_days: checked }));
+    if (!checked) {
+      // On désactive : on remet prolongationDays à 0
+      setProlongationDays(0);
+    } else {
+      // On active : on met 1 jour par défaut si prolongationDays est 0
+      if (prolongationDays === 0) {
+        setProlongationDays(1);
+      }
+    }
+  };
+
+  // Modification du champ "Jours à ajouter"
+  const handleProlongationDaysChange = (value) => {
+    const val = parseInt(value, 10);
+    if (!isNaN(val) && val >= 0) {
+      setProlongationDays(val);
+    }
+  };
+
+  // Recalculer manuellement (bouton)
+  const handleRecalculateTotal = () => {
+    const car = cars.find(c => c.id == formData.car_id);
+    if (!car) {
+      toast.warning("Sélectionnez un véhicule d'abord.");
+      return;
+    }
+    const rate = car.price_per_day || 0;
+    setDailyRate(rate);
+    // Le total sera recalculé par l'effet sur totalDays
+  };
+
+  // ------- CLIENTS -------
   const handleClientSelect = (client) => {
     setSelectedClient(client);
     setIsNewClient(false);
@@ -1068,7 +1241,7 @@ const handleRentalDaysChange = (value) => {
 
   const handleSaveNewClient = async () => {
     if (!newClientData.prenom || !newClientData.nom || !newClientData.telephone) {
-      toast.error("Veuillez remplir les champs obligatoires du client (Prénom, Nom, Téléphone)");
+      toast.error("Veuillez remplir les champs obligatoires (Prénom, Nom, Téléphone)");
       return;
     }
     setCreatingClient(true);
@@ -1097,7 +1270,7 @@ const handleRentalDaysChange = (value) => {
     setIsClientDropdownOpen(false);
   };
 
-  // ---------- Gestionnaires matricule ----------
+  // ------- MATRICULES -------
   const handleMatriculeSelect = (matricule) => {
     setSelectedMatricule(matricule);
     setMatriculeSearch(matricule.matricule_code);
@@ -1107,10 +1280,8 @@ const handleRentalDaysChange = (value) => {
       car_id: matricule.car_id,
       kilometrage_sortie: matricule.kilometrage || ""
     }));
-    const associatedCar = cars.find(c => c.id == matricule.car_id);
-    if (associatedCar) {
-      toast.success(`Véhicule sélectionné: ${associatedCar.brand} ${associatedCar.model}`);
-    }
+    const car = cars.find(c => c.id == matricule.car_id);
+    if (car) toast.success(`Véhicule: ${car.brand} ${car.model}`);
     setFilteredMatricules([]);
     setIsMatriculeDropdownOpen(false);
   };
@@ -1122,27 +1293,24 @@ const handleRentalDaysChange = (value) => {
     setIsMatriculeDropdownOpen(false);
   };
 
-  // ---------- Gestionnaires paiements ----------
+  // ------- PAIEMENTS -------
   const handleAddPayment = () => {
     if (!newPayment.amount || parseFloat(newPayment.amount) <= 0) {
-      toast.error("Veuillez entrer un montant valide");
+      toast.error("Montant invalide");
       return;
     }
     const amount = parseFloat(newPayment.amount);
     const currentTotalPaid = paymentHistory.reduce((sum, p) => sum + p.amount, 0);
     const maxPossible = (formData.total_price || 0) - currentTotalPaid;
-
     if (maxPossible <= 0) {
-      toast.error("Cette réservation est déjà entièrement payée.");
+      toast.error("Réservation déjà entièrement payée.");
       return;
     }
-
     let actualAmount = amount;
     if (actualAmount > maxPossible) {
       actualAmount = maxPossible;
-      toast.info(`Le paiement a été ajusté à ${actualAmount} DH (reste à payer).`);
+      toast.info(`Ajusté à ${actualAmount} DH (reste à payer).`);
     }
-
     const payment = {
       id: `payment_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       amount: actualAmount,
@@ -1151,56 +1319,51 @@ const handleRentalDaysChange = (value) => {
       notes: newPayment.notes || "",
       created_at: new Date().toISOString()
     };
-
-    const updatedHistory = [...paymentHistory, payment];
-    setPaymentHistory(updatedHistory);
-    const newAmountPaid = updatedHistory.reduce((sum, p) => sum + p.amount, 0);
-    const newRemaining = (formData.total_price || 0) - newAmountPaid;
-
+    const updated = [...paymentHistory, payment];
+    setPaymentHistory(updated);
+    const newPaid = updated.reduce((s, p) => s + p.amount, 0);
     setFormData(prev => ({
       ...prev,
-      amount_paid: newAmountPaid,
-      remaining_amount: newRemaining
+      amount_paid: newPaid,
+      remaining_amount: (prev.total_price || 0) - newPaid
     }));
-
     setNewPayment({ amount: "", date: new Date().toISOString().split("T")[0], method: "cash", notes: "" });
     setShowAddPayment(false);
     toast.success("Paiement ajouté");
   };
 
   const handleRemovePayment = (paymentId) => {
-    const updatedHistory = paymentHistory.filter(p => p.id !== paymentId);
-    setPaymentHistory(updatedHistory);
-    const newAmountPaid = updatedHistory.reduce((sum, p) => sum + p.amount, 0);
-    const newRemaining = (formData.total_price || 0) - newAmountPaid;
+    const updated = paymentHistory.filter(p => p.id !== paymentId);
+    setPaymentHistory(updated);
+    const newPaid = updated.reduce((s, p) => s + p.amount, 0);
     setFormData(prev => ({
       ...prev,
-      amount_paid: newAmountPaid,
-      remaining_amount: newRemaining
+      amount_paid: newPaid,
+      remaining_amount: (prev.total_price || 0) - newPaid
     }));
     toast.success("Paiement supprimé");
   };
 
-  // ===== VALIDATION HELPER =====
+  // ------- SOUMISSION -------
   const getValidatedData = () => {
     let clientId = formData.client_id;
     if (isNewClient && !clientId) {
-      toast.error("Veuillez confirmer la création du client en cliquant sur 'Confirmer la création'");
+      toast.error("Veuillez confirmer la création du client.");
       return null;
     }
     if (!clientId) {
       toast.error("Veuillez sélectionner ou créer un client");
       return null;
     }
-    const reservationData = {
+    return {
       ...formData,
       client_id: clientId,
-      payment_history: paymentHistory
+      payment_history: paymentHistory,
+      rental_days: totalDays,
+      prolongation_days: prolongationDays,
     };
-    return reservationData;
   };
 
-  // ---------- Soumission ----------
   const handleSubmit = async (e) => {
     e.preventDefault();
     const data = getValidatedData();
@@ -1211,128 +1374,13 @@ const handleRentalDaysChange = (value) => {
   const handleSubmitAndNavigate = () => {
     const data = getValidatedData();
     if (!data) return;
-    if (onSubmitAndNavigate) {
-      onSubmitAndNavigate(data);
-    } else {
-      onSubmit(data);
-    }
+    if (onSubmitAndNavigate) onSubmitAndNavigate(data);
+    else onSubmit(data);
   };
 
-  // ---------- Effets existants (inchangés) ----------
-  useEffect(() => {
-    if (editingReservation) {
-      const start = editingReservation.start_date?.split("T")[0] || "";
-      const end = editingReservation.end_date?.split("T")[0] || "";
-      const days = computeDays(start, end);
-      setFormData({
-        start_date: start,
-        end_date: end,
-        start_time: editingReservation.start_time || "08:00",
-        end_time: editingReservation.end_time || "18:00",
-        rental_days: days,
-        total_price: editingReservation.total_price || 0,
-        amount_paid: editingReservation.amount_paid || 0,
-        remaining_amount: editingReservation.remaining_amount || 0,
-        status: editingReservation.status || "pending",
-        car_id: editingReservation.car_id || "",
-        client_id: editingReservation.client_id || "",
-        matricule_id: editingReservation.matricule_id || "",
-        has_second_driver: editingReservation.has_second_driver || false,
-        second_driver_client_id: editingReservation.second_driver_client_id || "",
-        notes: editingReservation.notes || "",
-        reception_notes: editingReservation.reception_notes || "",
-        kilometrage_sortie: editingReservation.kilometrage_sortie || "",
-        kilometrage_entree: editingReservation.kilometrage_entree || "",
-        sous_location_id: editingReservation.sous_location_id || "",
-        can_extend_days: editingReservation.can_extend_days || false,
-        prolongation_days: editingReservation.prolongation_days || 0,
-      });
-      setPaymentHistory(
-        Array.isArray(editingReservation.payment_history)
-          ? editingReservation.payment_history
-          : []
-      );
-      if (editingReservation.client_id) {
-        const client = clients.find(c => c.id === editingReservation.client_id);
-        if (client) {
-          setSelectedClient(client);
-          setClientSearch(`${client.prenom} ${client.nom}`);
-        }
-      }
-      if (editingReservation.matricule_id) {
-        const matricule = matricules.find(m => m.id === editingReservation.matricule_id);
-        if (matricule) {
-          setSelectedMatricule(matricule);
-          setMatriculeSearch(matricule.matricule_code);
-          if (matricule.car_id) {
-            setFormData(prev => ({ ...prev, car_id: matricule.car_id }));
-          }
-        }
-      }
-    }
-  }, [editingReservation, clients, matricules]);
-
-  useEffect(() => {
-    if (formData.car_id) {
-      const filtered = matricules.filter(m => m.car_id == formData.car_id);
-      setCarMatricules(filtered);
-    } else {
-      setCarMatricules([]);
-    }
-  }, [formData.car_id, matricules]);
-
-  useEffect(() => {
-    if (formData.matricule_id) {
-      const selectedMatriculeObj = matricules.find(m => m.id == formData.matricule_id);
-      if (selectedMatriculeObj && (!formData.kilometrage_sortie || formData.kilometrage_sortie === "")) {
-        setFormData(prev => ({ ...prev, kilometrage_sortie: selectedMatriculeObj.kilometrage }));
-      }
-    }
-  }, [formData.matricule_id, matricules]);
-
-  useEffect(() => {
-    if (!editingReservation && formData.car_id && formData.rental_days) {
-      const car = cars.find(c => c.id == formData.car_id);
-      if (car) {
-        const total = car.price_per_day * formData.rental_days;
-        setFormData(prev => ({ ...prev, total_price: total }));
-      }
-    }
-  }, [formData.car_id, formData.rental_days, cars, editingReservation]);
-
-  useEffect(() => {
-    const total = parseFloat(formData.total_price) || 0;
-    const paid = parseFloat(formData.amount_paid) || 0;
-    const remaining = Math.max(total - paid, 0);
-    setFormData(prev => ({ ...prev, remaining_amount: remaining }));
-  }, [formData.total_price, formData.amount_paid]);
-
-  useEffect(() => {
-    if (isOpen) {
-      dispatch(fetchSousLocations());
-    }
-  }, [isOpen, dispatch]);
-
-  useEffect(() => {
-    if (!matriculeSearch.trim() || !matricules || !Array.isArray(matricules)) {
-      setFilteredMatricules([]);
-      return;
-    }
-    const searchTerm = matriculeSearch.toLowerCase().trim();
-    const filtered = matricules
-      .filter(mat => {
-        if (!mat || typeof mat !== "object") return false;
-        if (mat.status === 'sold') return false;
-        const matriculeCode = (mat.matricule_code || "").toLowerCase();
-        return matriculeCode.includes(searchTerm);
-      })
-      .slice(0, 10);
-    setFilteredMatricules(filtered);
-  }, [matriculeSearch, matricules]);
-
-  // ---------- Rendu ----------
   if (!isOpen) return null;
 
+  // ========== RENDU ==========
   return (
     <div className="modal-glass-container">
       <div className="modal-header-hero primary-hero">
@@ -1352,7 +1400,7 @@ const handleRentalDaysChange = (value) => {
       <form onSubmit={handleSubmit} className="modal-body-form">
         <div className="modal-grid-2">
           <div className="form-column">
-            {/* Section Client */}
+            {/* ---------- CLIENT ---------- */}
             <div className="form-card">
               <div className="card-header">
                 <User size={16} className="text-emerald" />
@@ -1434,7 +1482,7 @@ const handleRentalDaysChange = (value) => {
               )}
             </div>
 
-            {/* Deuxième conducteur */}
+            {/* ---------- DEUXIÈME CONDUCTEUR ---------- */}
             <div className="form-card">
               <div className="card-header">
                 <Users size={16} className="text-emerald" />
@@ -1460,8 +1508,8 @@ const handleRentalDaysChange = (value) => {
                     <strong>Deuxième conducteur sélectionné</strong>
                     <p>
                       {(() => {
-                        const secondDriver = clients.find(c => c.id === parseInt(formData.second_driver_client_id));
-                        return secondDriver ? `${secondDriver.prenom} ${secondDriver.nom} - ${secondDriver.telephone}` : "—";
+                        const sd = clients.find(c => c.id === parseInt(formData.second_driver_client_id));
+                        return sd ? `${sd.prenom} ${sd.nom} - ${sd.telephone}` : "—";
                       })()}
                     </p>
                   </div>
@@ -1469,7 +1517,7 @@ const handleRentalDaysChange = (value) => {
               )}
             </div>
 
-            {/* Dates et durée */}
+            {/* ---------- DATES ET DURÉE ---------- */}
             <div className="form-card">
               <div className="card-header">
                 <Calendar size={16} className="text-emerald" />
@@ -1485,23 +1533,11 @@ const handleRentalDaysChange = (value) => {
               </div>
               <div className="field-block">
                 <label>Nombre de jours</label>
-                <input
-                  type="number"
-                  className="styled-input"
-                  value={formData.rental_days ?? ''}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setFormData(prev => ({
-                      ...prev,
-                      rental_days: val === '' ? null : parseInt(val, 10) || null
-                    }));
-                  }}
-                  min="1"
-                />
+                <input type="number" className="styled-input" value={baseDays ?? ''} onChange={(e) => handleBaseDaysChange(e.target.value)} min="1" />
               </div>
             </div>
 
-            {/* Sous‑location & prolongation */}
+            {/* ---------- SOUS-LOCATION & PROLONGATION ---------- */}
             <div className="form-card">
               <div className="card-header">
                 <Tag size={16} className="text-emerald" />
@@ -1521,21 +1557,16 @@ const handleRentalDaysChange = (value) => {
                 <div className="field-block">
                   <label>Prolongation autorisée</label>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.25rem' }}>
-                    <label className="inline-checkbox" style={{ marginBottom: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <input
                         type="checkbox"
                         checked={formData.can_extend_days || false}
-                        onChange={(e) => {
-                          const checked = e.target.checked;
-                          setFormData(prev => ({
-                            ...prev,
-                            can_extend_days: checked,
-                            prolongation_days: checked ? (prev.prolongation_days || 1) : 0,
-                          }));
-                        }}
+                        onChange={(e) => handleProlongationToggle(e.target.checked)}
                       />
-                      <span>Le client pourra prolonger la location</span>
-                    </label>
+                      <span style={{ fontSize: '0.8rem', color: '#475569' }}>
+                        Le client pourra prolonger la location
+                      </span>
+                    </div>
                     {formData.can_extend_days && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <label style={{ fontSize: '0.8rem', fontWeight: 500, color: '#475569' }}>Jours à ajouter :</label>
@@ -1543,12 +1574,9 @@ const handleRentalDaysChange = (value) => {
                           type="number"
                           className="styled-input"
                           style={{ width: '80px', padding: '0.25rem 0.5rem' }}
-                          value={formData.prolongation_days || 1}
-                          onChange={(e) => {
-                            const val = parseInt(e.target.value) || 0;
-                            setFormData(prev => ({ ...prev, prolongation_days: val > 0 ? val : 1 }));
-                          }}
-                          min="1"
+                          value={prolongationDays}
+                          onChange={(e) => handleProlongationDaysChange(e.target.value)}
+                          min="0"
                         />
                       </div>
                     )}
@@ -1559,7 +1587,7 @@ const handleRentalDaysChange = (value) => {
           </div>
 
           <div className="form-column">
-            {/* Véhicule */}
+            {/* ---------- VÉHICULE ---------- */}
             <div className="form-card">
               <div className="card-header">
                 <Car size={16} className="text-emerald" />
@@ -1584,7 +1612,7 @@ const handleRentalDaysChange = (value) => {
                 {isMatriculeDropdownOpen && filteredMatricules.length > 0 && (
                   <div className="styled-dropdown">
                     {filteredMatricules.map(mat => {
-                      const carForMat = cars.find(c => c.id == mat.car_id);
+                      const car = cars.find(c => c.id == mat.car_id);
                       const isSold = mat.status === 'sold';
                       return (
                         <div key={mat.id} className="dropdown-item" onClick={() => handleMatriculeSelect(mat)}>
@@ -1593,9 +1621,9 @@ const handleRentalDaysChange = (value) => {
                             <span className={`badge ${isSold ? 'badge-danger' : 'badge-success'}`} style={{ marginLeft: '8px' }}>
                               {isSold ? 'Inactif' : 'Actif'}
                             </span>
-                            {carForMat && `- ${carForMat.brand} ${carForMat.model}`}
+                            {car && `- ${car.brand} ${car.model}`}
                           </div>
-                          <div className="dropdown-sub">Kilométrage: {mat.kilometrage} km • {carForMat && `${carForMat.price_per_day} DH/jour`}</div>
+                          <div className="dropdown-sub">Kilométrage: {mat.kilometrage} km • {car && `${car.price_per_day} DH/jour`}</div>
                         </div>
                       );
                     })}
@@ -1645,14 +1673,36 @@ const handleRentalDaysChange = (value) => {
               </div>
             </div>
 
-            {/* Paiement et statut */}
+            {/* ---------- PAIEMENT ET STATUT ---------- */}
             <div className="form-card">
               <div className="card-header">
                 <DollarSign size={16} className="text-emerald" />
                 <h4>Paiement et statut</h4>
               </div>
               <div className="input-group-row">
-                <div className="field-block"><label>Prix total (DH) *</label><input type="number" step="0.01" className="styled-input" value={formData.total_price} onChange={(e) => setFormData(prev => ({ ...prev, total_price: parseFloat(e.target.value) }))} required /></div>
+                <div className="field-block">
+                  <label>Prix total (DH) *</label>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <input
+                      type="number"
+                      step="0.01"
+                      className="styled-input"
+                      value={formData.total_price}
+                      onChange={(e) => setFormData(prev => ({ ...prev, total_price: parseFloat(e.target.value) || 0 }))}
+                      required
+                      style={{ flex: 1 }}
+                    />
+                    <button
+                      type="button"
+                      className="btn-modal-secondary"
+                      onClick={handleRecalculateTotal}
+                      style={{ padding: '0.4rem 0.8rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem', whiteSpace: 'nowrap' }}
+                      disabled={!formData.car_id}
+                    >
+                      <RefreshCw size={14} /> Recalculer
+                    </button>
+                  </div>
+                </div>
                 <div className="field-block"><label>Montant payé (DH)</label><input type="number" step="0.01" className="styled-input" value={formData.amount_paid} readOnly style={{ backgroundColor: "#f3f4f6" }} /></div>
               </div>
               <div className="input-group-row">
@@ -1667,12 +1717,9 @@ const handleRentalDaysChange = (value) => {
                         const updates = { status: newStatus };
                         const now = new Date();
                         const currentTime = now.toTimeString().slice(0, 5);
-                        if (newStatus === 'confirmed') {
-                          updates.start_time = currentTime;
-                        }
+                        if (newStatus === 'confirmed') updates.start_time = currentTime;
                         if (newStatus === 'completed') {
-                          const currentDate = now.toISOString().split('T')[0];
-                          updates.end_date = currentDate;
+                          updates.end_date = now.toISOString().split('T')[0];
                           updates.end_time = currentTime;
                         }
                         return { ...prev, ...updates };
@@ -1727,7 +1774,7 @@ const handleRentalDaysChange = (value) => {
               </div>
             </div>
 
-            {/* Notes */}
+            {/* ---------- NOTES ---------- */}
             <div className="form-card">
               <div className="card-header">
                 <Info size={16} className="text-emerald" />
@@ -1740,7 +1787,7 @@ const handleRentalDaysChange = (value) => {
           </div>
         </div>
 
-        {/* Modal création sous-location */}
+        {/* ---------- MODAL SOUS-LOCATION ---------- */}
         {showCreateSousLocationModal && (
           <div className="modal-overlay" onClick={() => setShowCreateSousLocationModal(false)}>
             <div className="modal" style={{ maxWidth: '450px' }} onClick={(e) => e.stopPropagation()}>
@@ -1811,6 +1858,7 @@ const handleRentalDaysChange = (value) => {
           </div>
         )}
 
+        {/* ---------- BOUTONS ---------- */}
         <div className="modal-footer-actions">
           <button type="button" className="btn-modal-secondary" onClick={onClose}>Annuler</button>
           <button type="submit" className="btn-modal-primary" disabled={submitting}>
@@ -1822,10 +1870,7 @@ const handleRentalDaysChange = (value) => {
               className="btn-modal-primary"
               onClick={handleSubmitAndNavigate}
               disabled={submitting}
-              style={{
-                background: '#3b82f6',
-                transition: 'background 0.2s'
-              }}
+              style={{ background: '#3b82f6', transition: 'background 0.2s' }}
               onMouseEnter={(e) => e.currentTarget.style.background = '#2563eb'}
               onMouseLeave={(e) => e.currentTarget.style.background = '#3b82f6'}
             >
@@ -2085,6 +2130,8 @@ export default function AdminReservations() {
   const store = useStore();
   const [searchParams, setSearchParams] = useSearchParams();
   const filterParam = searchParams.get('filter');
+  const focusParam = searchParams.get('focus');
+  const searchParam = searchParams.get('search');
 
   const reservations = useSelector(selectReservations);
   const cars = useSelector(selectCars);
@@ -2093,17 +2140,6 @@ export default function AdminReservations() {
   const loading = useSelector(selectReservationsLoading);
   const currentUser = useSelector(selectUser);
 
-  // ===== RECHERCHE PAR NOM (depuis AdminMatriculesClients) =====
-  const searchParam = searchParams.get('search');
-
-  useEffect(() => {
-    if (searchParam) {
-      setSearch(searchParam);
-      setCurrentPage(1);
-    }
-  }, [searchParam, setSearchParams]);
-
-  const [details, setDetails] = useState(null);
   const [expandedRowId, setExpandedRowId] = useState(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -2123,14 +2159,22 @@ export default function AdminReservations() {
     vignette: true, visiteTechnique: true, autorisation: true
   });
   const [contractDisplayOptions, setContractDisplayOptions] = useState({
-    prices: "show", clientInfo: "show", secondDriver: "show",
-    vehicleInfo: "show", deliveryReception: "show", rentalDates: "show",
-    kilometrage: "show", rentalDays: "show", observations: "show",
-    insurance: "show", depositGuarantee: "show", signatures: "show"
+    prices: "dash",
+    clientInfo: "show",
+    secondDriver: "show",
+    vehicleInfo: "show",
+    deliveryReception: "show",
+    rentalDates: "show",
+    kilometrage: "show",
+    rentalDays: "dash",
+    observations: "show",
+    insurance: "show",
+    depositGuarantee: "show",
+    signatures: "show"
   });
   const [showDisplayOptions, setShowDisplayOptions] = useState(false);
 
-  const [sortField, setSortField] = useState("id");
+  const [sortField, setSortField] = useState("start_date");
   const [sortDirection, setSortDirection] = useState("desc");
   const [startDateFilter, setStartDateFilter] = useState("");
   const [endDateFilter, setEndDateFilter] = useState("");
@@ -2163,6 +2207,39 @@ export default function AdminReservations() {
     };
     load();
   }, [dispatch]);
+
+  // ===== FOCUS FROM URL PARAMETER =====
+  useEffect(() => {
+    if (focusParam && reservations.length > 0) {
+      const found = reservations.find(r => r.id === parseInt(focusParam));
+      if (found) {
+        setSearch(`#${focusParam}`);
+        setCurrentPage(1);
+        setTimeout(() => {
+          const element = document.getElementById(`reservation-${focusParam}`);
+          if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            element.style.background = '#fef3c7';
+            setTimeout(() => {
+              element.style.background = '';
+            }, 3000);
+          }
+        }, 500);
+        setSearchParams({});
+      } else {
+        toast.warning(`Réservation #${focusParam} non trouvée`);
+        setSearchParams({});
+      }
+    }
+  }, [focusParam, reservations, setSearchParams]);
+
+  // ===== RECHERCHE PAR NOM =====
+  useEffect(() => {
+    if (searchParam) {
+      setSearch(searchParam);
+      setCurrentPage(1);
+    }
+  }, [searchParam]);
 
   // ===== Handle contract opening from navigation =====
   const lastProcessedContractId = useRef(null);
@@ -2251,7 +2328,6 @@ export default function AdminReservations() {
       const result = await dispatch(createReservation(data)).unwrap();
       const reservation = result.reservation || result;
       toast.success("Réservation créée avec succès!");
-      // La synchronisation du rapport est volontairement omise ici
       await dispatch(fetchReservations(true));
       await dispatch(refreshMatricules(true));
 
@@ -2701,7 +2777,6 @@ export default function AdminReservations() {
   // ----- Filtering and sorting (EXCLUT pending, cancelled, contacted) -----
   const filteredReservations = useMemo(() => {
     let filtered = reservations.filter(r => {
-      // ============ EXCLUDE pending, cancelled, contacted ============
       if (r.status === 'pending' || r.status === 'cancelled' || r.status === 'contacted') {
         return false;
       }
@@ -2771,7 +2846,6 @@ export default function AdminReservations() {
     filtered.sort((a, b) => {
       let aVal, bVal;
       switch (sortField) {
-        case "id": aVal = a.id; bVal = b.id; break;
         case "client": const aClient = clients.find(c => c.id === a.client_id); const bClient = clients.find(c => c.id === b.client_id); aVal = aClient ? `${aClient.prenom} ${aClient.nom}` : ""; bVal = bClient ? `${bClient.prenom} ${bClient.nom}` : ""; break;
         case "vehicle": const aCar = cars.find(c => c.id === a.car_id); const bCar = cars.find(c => c.id === b.car_id); aVal = aCar ? `${aCar.brand} ${aCar.model}` : ""; bVal = bCar ? `${bCar.brand} ${bCar.model}` : ""; break;
         case "matricule": const aMat = matricules.find(m => m.id === a.matricule_id); const bMat = matricules.find(m => m.id === b.matricule_id); aVal = aMat?.matricule_code || ""; bVal = bMat?.matricule_code || ""; break;
@@ -2952,16 +3026,16 @@ export default function AdminReservations() {
         />
       ) : showReservationForm ? (
         <ReservationForm
-  isOpen={showReservationForm}
-  onClose={() => { setShowReservationForm(false); setEditingReservation(null); }}
-  onSubmit={editingReservation ? handleUpdateReservation : handleCreateReservation}
-  onSubmitAndNavigate={editingReservation ? handleUpdateAndNavigate : handleCreateAndNavigate}   // <-- NEW
-  editingReservation={editingReservation}
-  clients={clients}
-  cars={cars}
-  matricules={matricules}
-  submitting={submitting}
-/>
+          isOpen={showReservationForm}
+          onClose={() => { setShowReservationForm(false); setEditingReservation(null); }}
+          onSubmit={editingReservation ? handleUpdateReservation : handleCreateReservation}
+          onSubmitAndNavigate={editingReservation ? handleUpdateAndNavigate : handleCreateAndNavigate}
+          editingReservation={editingReservation}
+          clients={clients}
+          cars={cars}
+          matricules={matricules}
+          submitting={submitting}
+        />
       ) : (
         <div className="admin-smaiti-page">
           <div className="smaiti-topbar">
@@ -3052,509 +3126,482 @@ export default function AdminReservations() {
                 </tr>
               </thead>
               <tbody>
-  {paginated.length === 0 ? (
-    <tr><td colSpan="11" className="text-center py-12">Aucune réservation</td></tr>
-  ) : (
-    paginated.map(r => {
-      const client = clients.find(c => c.id === r.client_id);
-      const car = cars.find(c => c.id === r.car_id);
-      const mat = matricules.find(m => m.id === r.matricule_id);
-      const days = calculateDays(r.start_date, r.end_date);
-      const daysRemaining = calculateDaysRemaining(r);
-      const secondDriver = clients.find(c => c.id === r.second_driver_client_id);
-      let rowPaymentHistory = r.payment_history;
-      if (typeof rowPaymentHistory === 'string') {
-        try { rowPaymentHistory = JSON.parse(rowPaymentHistory); } catch (e) { rowPaymentHistory = []; }
-      }
-      if (!Array.isArray(rowPaymentHistory)) rowPaymentHistory = [];
-      // Strip auto-generated report filenames (e.g. "Rapport_Auto_2_2026-08.pdf") from payment notes
-      const rapportAutoPattern = /rapport[_\s-]?auto[^\s,;()]*\.pdf/gi;
-      rowPaymentHistory = rowPaymentHistory.map(p => {
-        if (!p.notes) return p;
-        const cleanedNotes = String(p.notes).replace(rapportAutoPattern, '').replace(/^[\s,;-]+|[\s,;-]+$/g, '').trim();
-        return { ...p, notes: cleanedNotes };
-      });
-      const isExpanded = expandedRowId === r.id;
-      return (
-        <Fragment key={r.id}>
-        <tr>
-          {/* Client */}
-          <td>
-  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-    <User size={16} style={{ color: '#64748b' }} />
-    <div>
-      <div style={{
-        fontWeight: 600,
-        fontSize: '0.9rem',
-        color: '#0f172a',
-        background: '#f1f5f9',
-        padding: '0 10px',
-        borderRadius: '12px',
-        display: 'inline-block'
-      }}>
-        {client ? `${client.prenom} ${client.nom}` : "—"}
-      </div>
-      {secondDriver && r.has_second_driver && (
-        <div style={{
-          fontSize: '0.65rem',
-          color: '#eab308',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '4px',
-          marginTop: '2px'
-        }}>
-          <Users size={10} /> {secondDriver.prenom} {secondDriver.nom}
-        </div>
-      )}
-    </div>
-  </div>
-</td>
-          {/* Véhicule / Matricule */}
-<td>
-  <div style={{
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
-    padding: '10px 14px',
-    background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-    borderRadius: '12px',
-    borderLeft: '5px solid #10b981',
-    minWidth: '250px',
-    flexShrink: 0,
-    boxShadow: '0 2px 6px rgba(16, 185, 129, 0.15)',
-    boxSizing: 'border-box'
-  }}>
-    {/* Ligne supérieure : Modèle + Couleur + Année (sur une seule ligne) */}
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
-      flexWrap: 'nowrap',
-      overflow: 'hidden'
-    }}>
-      {/* Modèle */}
-      <span style={{
-        fontWeight: 800,
-        fontSize: '1.1rem',
-        color: '#064e3b',
-        letterSpacing: '0.3px',
-        whiteSpace: 'nowrap'
-      }}>
-        {car ? `${car.model}` : "—"}
-      </span>
+                {paginated.length === 0 ? (
+                  <tr><td colSpan="10" className="text-center py-12">Aucune réservation</td></tr>
+                ) : (
+                  paginated.map(r => {
+                    const client = clients.find(c => c.id === r.client_id);
+                    const car = cars.find(c => c.id === r.car_id);
+                    const mat = matricules.find(m => m.id === r.matricule_id);
+                    const days = calculateDays(r.start_date, r.end_date);
+                    const daysRemaining = calculateDaysRemaining(r);
+                    const secondDriver = clients.find(c => c.id === r.second_driver_client_id);
+                    let rowPaymentHistory = r.payment_history;
+                    if (typeof rowPaymentHistory === 'string') {
+                      try { rowPaymentHistory = JSON.parse(rowPaymentHistory); } catch (e) { rowPaymentHistory = []; }
+                    }
+                    if (!Array.isArray(rowPaymentHistory)) rowPaymentHistory = [];
+                    const isExpanded = expandedRowId === r.id;
+                    return (
+                      <Fragment key={r.id}>
+                        <tr id={`reservation-${r.id}`}>
+                          <td>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <User size={16} style={{ color: '#64748b' }} />
+                              <div>
+                                <div style={{
+                                  fontWeight: 600,
+                                  fontSize: '0.9rem',
+                                  color: '#0f172a',
+                                  background: '#f1f5f9',
+                                  padding: '0 10px',
+                                  borderRadius: '12px',
+                                  display: 'inline-block'
+                                }}>
+                                  {client ? `${client.prenom} ${client.nom}` : "—"}
+                                </div>
+                                {secondDriver && r.has_second_driver && (
+                                  <div style={{
+                                    fontSize: '0.65rem',
+                                    color: '#eab308',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    marginTop: '2px'
+                                  }}>
+                                    <Users size={10} /> {secondDriver.prenom} {secondDriver.nom}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td>
+                            <div style={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '8px',
+                              padding: '10px 14px',
+                              background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                              borderRadius: '12px',
+                              borderLeft: '5px solid #10b981',
+                              minWidth: '250px',
+                              flexShrink: 0,
+                              boxShadow: '0 2px 6px rgba(16, 185, 129, 0.15)',
+                              boxSizing: 'border-box'
+                            }}>
+                              <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                flexWrap: 'nowrap',
+                                overflow: 'hidden'
+                              }}>
+                                <span style={{
+                                  fontWeight: 800,
+                                  fontSize: '1.1rem',
+                                  color: '#064e3b',
+                                  letterSpacing: '0.3px',
+                                  whiteSpace: 'nowrap'
+                                }}>
+                                  {car ? `${car.model}` : "—"}
+                                </span>
+                                {car?.color && (
+                                  <span style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    fontWeight: 700,
+                                    fontSize: '0.95rem',
+                                    color: '#065f46',
+                                    background: 'rgba(255,255,255,0.6)',
+                                    padding: '2px 12px 2px 6px',
+                                    borderRadius: '24px',
+                                    boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                                    whiteSpace: 'nowrap'
+                                  }}>
+                                    <span style={{
+                                      display: 'inline-block',
+                                      width: '16px',
+                                      height: '16px',
+                                      borderRadius: '50%',
+                                      backgroundColor: getColorValue(car.color),
+                                      border: '2px solid white',
+                                      boxShadow: '0 0 0 1px rgba(0,0,0,0.1)',
+                                      flexShrink: 0
+                                    }} />
+                                    {car.color}
+                                  </span>
+                                )}
+                                {car?.year && (
+                                  <span style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    fontWeight: 700,
+                                    fontSize: '0.85rem',
+                                    color: '#1e293b',
+                                    background: '#d1fae5',
+                                    padding: '2px 12px',
+                                    borderRadius: '20px',
+                                    border: '1px solid #a7f3d0',
+                                    whiteSpace: 'nowrap'
+                                  }}>
+                                    <Calendar size={12} style={{ color: '#065f46' }} />
+                                    {String(car.year).slice(-2)}
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{
+                                fontFamily: 'Courier New, monospace',
+                                fontWeight: 800,
+                                color: '#064e3b',
+                                fontSize: '0.85rem',
+                                letterSpacing: '0.8px',
+                                background: 'rgba(255,255,255,0.5)',
+                                padding: '4px 14px',
+                                borderRadius: '8px',
+                                width: 'fit-content',
+                                border: '1px solid rgba(16, 185, 129, 0.3)',
+                                whiteSpace: 'nowrap'
+                              }}>
+                                {mat?.matricule_code || "—"}
+                              </div>
+                            </div>
+                          </td>
+                          <td>
+                            <div className="period-cell">
+                              <div className="period-line">
+                                <Calendar size={12} className="period-icon" />
+                                {new Date(r.start_date).toLocaleDateString("fr-FR")}
+                              </div>
+                              <div className="period-line period-arrow">
+                                <span className="arrow-icon">→</span>
+                                {new Date(r.end_date).toLocaleDateString("fr-FR")}
+                              </div>
+                            </div>
+                          </td>
+                          <td>
+                            <span className="days-badge">
+                              <CalendarDays size={12} className="days-icon" />
+                              {days} {days > 1 ? 'jours' : 'jour'}
+                            </span>
+                          </td>
+                          <td className={`days-remaining-cell ${r.status === "retard" ? "late" : ""}`}>{daysRemaining}</td>
+                          <td>
+                            <span style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              background: '#dcfce7',
+                              color: '#166534',
+                              padding: '2px 12px',
+                              borderRadius: '20px',
+                              fontWeight: '700',
+                              fontSize: '0.875rem',
+                              border: '1px solid #22c55e'
+                            }}>
+                              <Coins size={14} style={{ color: '#16a34a' }} />
+                              {r.total_price} DH
+                            </span>
+                          </td>
+                          <td>{getStatusBadge(r.status)}</td>
+                          <td>
+                            {r.can_extend_days ? (
+                              <span style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                background: '#dcfce7',
+                                color: '#166534',
+                                padding: '2px 12px',
+                                borderRadius: '20px',
+                                fontWeight: '600',
+                                fontSize: '0.75rem'
+                              }}>
+                                <CalendarPlus size={14} style={{ color: '#16a34a' }} /> Oui
+                              </span>
+                            ) : (
+                              <span style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                background: '#fee2e2',
+                                color: '#991b1b',
+                                padding: '2px 12px',
+                                borderRadius: '20px',
+                                fontWeight: '600',
+                                fontSize: '0.75rem'
+                              }}>
+                                <CalendarX size={14} style={{ color: '#ef4444' }} /> Non
+                              </span>
+                            )}
+                          </td>
+                          <td>
+                            {r.sous_location ? (
+                              <span className="sous-location-tag">
+                                <Tag size={14} /> {r.sous_location.name}
+                              </span>
+                            ) : (
+                              <span className="badge badge-warning">
+                                <Home size={14} /> Propre
+                              </span>
+                            )}
+                          </td>
+                          <td className="text-right">
+                            <div style={{
+                              display: 'grid',
+                              gridTemplateColumns: 'repeat(4, auto)',
+                              gap: '4px',
+                              justifyContent: 'flex-end',
+                              justifyItems: 'center'
+                            }}>
+                              {(r.status === "confirmed" || r.status === "retard") && (
+                                <button onClick={() => setStatus(r.id, "completed")}
+                                  style={{
+                                    width: '32px', height: '32px',
+                                    borderRadius: '50%',
+                                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                    border: 'none', background: 'transparent', cursor: 'pointer',
+                                    color: '#eab308', transition: 'all 0.2s'
+                                  }}
+                                  onMouseEnter={(e) => { e.currentTarget.style.background = '#fefce8'; e.currentTarget.style.transform = 'scale(1.1)' }}
+                                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'scale(1)' }}
+                                  title="Terminer"
+                                >
+                                  <CheckCircle size={16} />
+                                </button>
+                              )}
+                              <button onClick={() => handleSignatureLink(r)}
+                                style={{
+                                  width: '32px', height: '32px',
+                                  borderRadius: '50%',
+                                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                  border: 'none', background: 'transparent', cursor: 'pointer',
+                                  color: '#3b82f6', transition: 'all 0.2s'
+                                }}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = '#eff6ff'; e.currentTarget.style.transform = 'scale(1.1)' }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'scale(1)' }}
+                                title="Copier le lien de signature"
+                              >
+                                <Link2 size={16} />
+                              </button>
+                              <button onClick={() => handleViewContract(r)}
+                                style={{
+                                  width: '32px', height: '32px',
+                                  borderRadius: '50%',
+                                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                  border: 'none', background: 'transparent', cursor: 'pointer',
+                                  color: '#3b82f6', transition: 'all 0.2s'
+                                }}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = '#eff6ff'; e.currentTarget.style.transform = 'scale(1.1)' }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'scale(1)' }}
+                                title="Voir contrat"
+                              >
+                                <FileText size={16} />
+                              </button>
+                              <button onClick={() => handlePrintClick(r)}
+                                style={{
+                                  width: '32px', height: '32px',
+                                  borderRadius: '50%',
+                                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                  border: 'none', background: 'transparent', cursor: 'pointer',
+                                  color: '#8b5cf6', transition: 'all 0.2s'
+                                }}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = '#f5f3ff'; e.currentTarget.style.transform = 'scale(1.1)' }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'scale(1)' }}
+                                title="Imprimer"
+                              >
+                                <Printer size={16} />
+                              </button>
+                              <button onClick={() => handleWhatsApp(r)}
+                                style={{
+                                  width: '32px', height: '32px',
+                                  borderRadius: '50%',
+                                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                  border: 'none', background: 'transparent', cursor: 'pointer',
+                                  color: '#25d366', transition: 'all 0.2s'
+                                }}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = '#ecfdf5'; e.currentTarget.style.transform = 'scale(1.1)' }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'scale(1)' }}
+                                title="Envoyer un message WhatsApp"
+                              >
+                                <MessageCircle size={16} />
+                              </button>
+                              <button onClick={() => handleEdit(r)}
+                                style={{
+                                  width: '32px', height: '32px',
+                                  borderRadius: '50%',
+                                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                  border: 'none', background: 'transparent', cursor: 'pointer',
+                                  color: '#10b981', transition: 'all 0.2s'
+                                }}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = '#ecfdf5'; e.currentTarget.style.transform = 'scale(1.1)' }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'scale(1)' }}
+                                title="Modifier"
+                              >
+                                <Edit size={16} />
+                              </button>
+                              <button onClick={() => setExpandedRowId(expandedRowId === r.id ? null : r.id)}
+                                style={{
+                                  width: '32px', height: '32px',
+                                  borderRadius: '50%',
+                                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                  border: 'none', background: 'transparent', cursor: 'pointer',
+                                  color: '#06b6d4', transition: 'all 0.2s'
+                                }}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = '#ecfeff'; e.currentTarget.style.transform = 'scale(1.1)' }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'scale(1)' }}
+                                title="Détails"
+                              >
+                                {expandedRowId === r.id ? <ChevronUp size={16} /> : <Eye size={16} />}
+                              </button>
+                              <button onClick={() => handleDeleteClick(r)}
+                                style={{
+                                  width: '32px', height: '32px',
+                                  borderRadius: '50%',
+                                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                  border: 'none', background: 'transparent', cursor: 'pointer',
+                                  color: '#ef4444', transition: 'all 0.2s'
+                                }}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = '#fef2f2'; e.currentTarget.style.transform = 'scale(1.1)' }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'scale(1)' }}
+                                title="Supprimer"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr>
+                            <td colSpan="10" style={{ padding: 0, background: 'linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)', borderBottom: '1px solid #e2e8f0' }}>
+                              <div style={{
+                                display: 'flex',
+                                flexWrap: 'wrap',
+                                gap: '16px',
+                                padding: '18px 24px 22px',
+                                alignItems: 'stretch'
+                              }}>
+                                <div style={{
+                                  minWidth: '230px',
+                                  flex: '1 1 230px',
+                                  background: '#ffffff',
+                                  borderRadius: '12px',
+                                  borderLeft: '4px solid #06b6d4',
+                                  boxShadow: '0 1px 4px rgba(15, 23, 42, 0.06)',
+                                  padding: '14px 16px'
+                                }}>
+                                  <div style={{
+                                    display: 'flex', alignItems: 'center', gap: '6px',
+                                    fontWeight: 700, fontSize: '0.75rem', color: '#0891b2',
+                                    marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.04em'
+                                  }}>
+                                    <DollarSign size={14} /> Paiement
+                                  </div>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.85rem' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+                                      <span style={{ color: '#64748b' }}>Total</span>
+                                      <span style={{ fontWeight: 700, color: '#0f172a' }}>{r.total_price} DH</span>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+                                      <span style={{ color: '#64748b' }}>Payé</span>
+                                      <span style={{
+                                        fontWeight: 700, color: '#16a34a',
+                                        background: '#f0fdf4', padding: '1px 8px', borderRadius: '10px'
+                                      }}>{r.amount_paid} DH</span>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+                                      <span style={{ color: '#64748b' }}>Restant</span>
+                                      <span style={{
+                                        fontWeight: 700, color: '#dc2626',
+                                        background: '#fef2f2', padding: '1px 8px', borderRadius: '10px'
+                                      }}>{r.remaining_amount} DH</span>
+                                    </div>
+                                  </div>
+                                </div>
 
-      {/* Couleur */}
-      {car?.color && (
-        <span style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '6px',
-          fontWeight: 700,
-          fontSize: '0.95rem',
-          color: '#065f46',
-          background: 'rgba(255,255,255,0.6)',
-          padding: '2px 12px 2px 6px',
-          borderRadius: '24px',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
-          whiteSpace: 'nowrap'
-        }}>
-          <span style={{
-            display: 'inline-block',
-            width: '16px',
-            height: '16px',
-            borderRadius: '50%',
-            backgroundColor: getColorValue(car.color),
-            border: '2px solid white',
-            boxShadow: '0 0 0 1px rgba(0,0,0,0.1)',
-            flexShrink: 0
-          }} />
-          {car.color}
-        </span>
-      )}
+                                {rowPaymentHistory.length > 0 && (
+                                  <div style={{
+                                    minWidth: '260px',
+                                    flex: '1 1 260px',
+                                    background: '#ffffff',
+                                    borderRadius: '12px',
+                                    borderLeft: '4px solid #8b5cf6',
+                                    boxShadow: '0 1px 4px rgba(15, 23, 42, 0.06)',
+                                    padding: '14px 16px'
+                                  }}>
+                                    <div style={{
+                                      display: 'flex', alignItems: 'center', gap: '6px',
+                                      fontWeight: 700, fontSize: '0.75rem', color: '#7c3aed',
+                                      marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.04em'
+                                    }}>
+                                      <Receipt size={14} /> Historique des paiements
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                      {rowPaymentHistory.map((p, idx) => (
+                                        <div key={idx} style={{
+                                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                          gap: '10px', fontSize: '0.8rem', color: '#334155',
+                                          padding: '4px 0', borderBottom: idx < rowPaymentHistory.length - 1 ? '1px dashed #e2e8f0' : 'none'
+                                        }}>
+                                          <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>{new Date(p.date).toLocaleDateString("fr-FR")}</span>
+                                          <span style={{ fontWeight: 600, color: '#16a34a' }}>{p.amount} DH</span>
+                                          <span style={{
+                                            fontSize: '0.7rem', color: '#7c3aed', background: '#f5f3ff',
+                                            padding: '1px 8px', borderRadius: '10px', textTransform: 'capitalize'
+                                          }}>{p.method}</span>
+                                          {p.notes && <span style={{ color: '#64748b', fontSize: '0.75rem', fontStyle: 'italic' }}>{p.notes}</span>}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
 
-      {/* Année avec icône calendrier – affichée en deux chiffres */}
-      {car?.year && (
-        <span style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '4px',
-          fontWeight: 700,
-          fontSize: '0.85rem',
-          color: '#1e293b',
-          background: '#d1fae5',
-          padding: '2px 12px',
-          borderRadius: '20px',
-          border: '1px solid #a7f3d0',
-          whiteSpace: 'nowrap'
-        }}>
-          <Calendar size={12} style={{ color: '#065f46' }} />
-          {String(car.year).slice(-2)}
-        </span>
-      )}
-    </div>
-
-    {/* Matricule – en dessous */}
-    <div style={{
-      fontFamily: 'Courier New, monospace',
-      fontWeight: 800,
-      color: '#064e3b',
-      fontSize: '0.85rem',
-      letterSpacing: '0.8px',
-      background: 'rgba(255,255,255,0.5)',
-      padding: '4px 14px',
-      borderRadius: '8px',
-      width: 'fit-content',
-      border: '1px solid rgba(16, 185, 129, 0.3)',
-      whiteSpace: 'nowrap'
-    }}>
-      {mat?.matricule_code || "—"}
-    </div>
-  </div>
-</td>{/* Période */}
-          <td>
-            <div className="period-cell">
-              <div className="period-line">
-                <Calendar size={12} className="period-icon" />
-                {new Date(r.start_date).toLocaleDateString("fr-FR")}
-              </div>
-              <div className="period-line period-arrow">
-                <span className="arrow-icon">→</span>
-                {new Date(r.end_date).toLocaleDateString("fr-FR")}
-              </div>
-            </div>
-          </td>
-          {/* Jours */}
-          <td>
-            <span className="days-badge">
-              <CalendarDays size={12} className="days-icon" />
-              {days} {days > 1 ? 'jours' : 'jour'}
-            </span>
-          </td>
-          {/* Jours restants */}
-          <td className={`days-remaining-cell ${r.status === "retard" ? "late" : ""}`}>{daysRemaining}</td>
-          {/* Total */}
-          <td>
-  <span style={{
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '4px',
-    background: '#dcfce7',
-    color: '#166534',
-    padding: '2px 12px',
-    borderRadius: '20px',
-    fontWeight: '700',
-    fontSize: '0.875rem',
-    border: '1px solid #22c55e'
-  }}>
-    <Coins size={14} style={{ color: '#16a34a' }} />
-    {r.total_price} DH
-  </span>
-</td>
-          {/* Statut */}
-          <td>{getStatusBadge(r.status)}</td>
-          {/* Prolongation */}
-          <td>
-  {r.can_extend_days ? (
-    <span style={{
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: '6px',
-      background: '#dcfce7',
-      color: '#166534',
-      padding: '2px 12px',
-      borderRadius: '20px',
-      fontWeight: '600',
-      fontSize: '0.75rem'
-    }}>
-      <CalendarPlus size={14} style={{ color: '#16a34a' }} /> Oui
-    </span>
-  ) : (
-    <span style={{
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: '6px',
-      background: '#fee2e2',
-      color: '#991b1b',
-      padding: '2px 12px',
-      borderRadius: '20px',
-      fontWeight: '600',
-      fontSize: '0.75rem'
-    }}>
-      <CalendarX size={14} style={{ color: '#ef4444' }} /> Non
-    </span>
-  )}
-</td>
-          {/* Sous‑location */}
-          <td>
-            {r.sous_location ? (
-              <span className="sous-location-tag">
-                <Tag size={14} /> {r.sous_location.name}
-              </span>
-            ) : (
-              <span className="badge badge-warning">
-                <Home size={14} /> Propre
-              </span>
-            )}
-          </td>
-          {/* Actions */}
-          <td className="text-right">
-  <div style={{
-    display: 'grid',
-    gridTemplateColumns: 'repeat(4, auto)',
-    gap: '4px',
-    justifyContent: 'flex-end',
-    justifyItems: 'center'
-  }}>
-    {(r.status === "confirmed" || r.status === "retard") && (
-      <button onClick={() => setStatus(r.id, "completed")}
-        style={{
-          width: '32px', height: '32px',
-          borderRadius: '50%',
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          border: 'none', background: 'transparent', cursor: 'pointer',
-          color: '#eab308', transition: 'all 0.2s'
-        }}
-        onMouseEnter={(e) => { e.currentTarget.style.background = '#fefce8'; e.currentTarget.style.transform = 'scale(1.1)' }}
-        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'scale(1)' }}
-        title="Terminer"
-      >
-        <CheckCircle size={16} />
-      </button>
-    )}
-    <button onClick={() => handleSignatureLink(r)}
-      style={{
-        width: '32px', height: '32px',
-        borderRadius: '50%',
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        border: 'none', background: 'transparent', cursor: 'pointer',
-        color: '#3b82f6', transition: 'all 0.2s'
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = '#eff6ff'; e.currentTarget.style.transform = 'scale(1.1)' }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'scale(1)' }}
-      title="Copier le lien de signature"
-    >
-      <Link2 size={16} />
-    </button>
-    <button onClick={() => handleViewContract(r)}
-      style={{
-        width: '32px', height: '32px',
-        borderRadius: '50%',
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        border: 'none', background: 'transparent', cursor: 'pointer',
-        color: '#3b82f6', transition: 'all 0.2s'
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = '#eff6ff'; e.currentTarget.style.transform = 'scale(1.1)' }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'scale(1)' }}
-      title="Voir contrat"
-    >
-      <FileText size={16} />
-    </button>
-    <button onClick={() => handlePrintClick(r)}
-      style={{
-        width: '32px', height: '32px',
-        borderRadius: '50%',
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        border: 'none', background: 'transparent', cursor: 'pointer',
-        color: '#8b5cf6', transition: 'all 0.2s'
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = '#f5f3ff'; e.currentTarget.style.transform = 'scale(1.1)' }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'scale(1)' }}
-      title="Imprimer"
-    >
-      <Printer size={16} />
-    </button>
-    <button onClick={() => handleWhatsApp(r)}
-      style={{
-        width: '32px', height: '32px',
-        borderRadius: '50%',
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        border: 'none', background: 'transparent', cursor: 'pointer',
-        color: '#25d366', transition: 'all 0.2s'
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = '#ecfdf5'; e.currentTarget.style.transform = 'scale(1.1)' }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'scale(1)' }}
-      title="Envoyer un message WhatsApp"
-    >
-      <MessageCircle size={16} />
-    </button>
-    <button onClick={() => handleEdit(r)}
-      style={{
-        width: '32px', height: '32px',
-        borderRadius: '50%',
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        border: 'none', background: 'transparent', cursor: 'pointer',
-        color: '#10b981', transition: 'all 0.2s'
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = '#ecfdf5'; e.currentTarget.style.transform = 'scale(1.1)' }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'scale(1)' }}
-      title="Modifier"
-    >
-      <Edit size={16} />
-    </button>
-    <button onClick={() => setExpandedRowId(expandedRowId === r.id ? null : r.id)}
-      style={{
-        width: '32px', height: '32px',
-        borderRadius: '50%',
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        border: 'none', background: 'transparent', cursor: 'pointer',
-        color: '#06b6d4', transition: 'all 0.2s'
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = '#ecfeff'; e.currentTarget.style.transform = 'scale(1.1)' }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'scale(1)' }}
-      title="Détails"
-    >
-      {expandedRowId === r.id ? <ChevronUp size={16} /> : <Eye size={16} />}
-    </button>
-    <button onClick={() => handleDeleteClick(r)}
-      style={{
-        width: '32px', height: '32px',
-        borderRadius: '50%',
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        border: 'none', background: 'transparent', cursor: 'pointer',
-        color: '#ef4444', transition: 'all 0.2s'
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = '#fef2f2'; e.currentTarget.style.transform = 'scale(1.1)' }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'scale(1)' }}
-      title="Supprimer"
-    >
-      <Trash2 size={16} />
-    </button>
-  </div>
-</td>
-        </tr>
-        {isExpanded && (
-          <tr>
-            <td colSpan="10" style={{ padding: 0, background: 'linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)', borderBottom: '1px solid #e2e8f0' }}>
-              <div style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: '16px',
-                padding: '18px 24px 22px',
-                alignItems: 'stretch'
-              }}>
-                {/* Paiement */}
-                <div style={{
-                  minWidth: '230px',
-                  flex: '1 1 230px',
-                  background: '#ffffff',
-                  borderRadius: '12px',
-                  borderLeft: '4px solid #06b6d4',
-                  boxShadow: '0 1px 4px rgba(15, 23, 42, 0.06)',
-                  padding: '14px 16px'
-                }}>
-                  <div style={{
-                    display: 'flex', alignItems: 'center', gap: '6px',
-                    fontWeight: 700, fontSize: '0.75rem', color: '#0891b2',
-                    marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.04em'
-                  }}>
-                    <DollarSign size={14} /> Paiement
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.85rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
-                      <span style={{ color: '#64748b' }}>Total</span>
-                      <span style={{ fontWeight: 700, color: '#0f172a' }}>{r.total_price} DH</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
-                      <span style={{ color: '#64748b' }}>Payé</span>
-                      <span style={{
-                        fontWeight: 700, color: '#16a34a',
-                        background: '#f0fdf4', padding: '1px 8px', borderRadius: '10px'
-                      }}>{r.amount_paid} DH</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
-                      <span style={{ color: '#64748b' }}>Restant</span>
-                      <span style={{
-                        fontWeight: 700, color: '#dc2626',
-                        background: '#fef2f2', padding: '1px 8px', borderRadius: '10px'
-                      }}>{r.remaining_amount} DH</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Historique des paiements */}
-                {rowPaymentHistory.length > 0 && (
-                  <div style={{
-                    minWidth: '260px',
-                    flex: '1 1 260px',
-                    background: '#ffffff',
-                    borderRadius: '12px',
-                    borderLeft: '4px solid #8b5cf6',
-                    boxShadow: '0 1px 4px rgba(15, 23, 42, 0.06)',
-                    padding: '14px 16px'
-                  }}>
-                    <div style={{
-                      display: 'flex', alignItems: 'center', gap: '6px',
-                      fontWeight: 700, fontSize: '0.75rem', color: '#7c3aed',
-                      marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.04em'
-                    }}>
-                      <Receipt size={14} /> Historique des paiements
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      {rowPaymentHistory.map((p, idx) => (
-                        <div key={idx} style={{
-                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                          gap: '10px', fontSize: '0.8rem', color: '#334155',
-                          padding: '4px 0', borderBottom: idx < rowPaymentHistory.length - 1 ? '1px dashed #e2e8f0' : 'none'
-                        }}>
-                          <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>{new Date(p.date).toLocaleDateString("fr-FR")}</span>
-                          <span style={{ fontWeight: 600, color: '#16a34a' }}>{p.amount} DH</span>
-                          <span style={{
-                            fontSize: '0.7rem', color: '#7c3aed', background: '#f5f3ff',
-                            padding: '1px 8px', borderRadius: '10px', textTransform: 'capitalize'
-                          }}>{p.method}</span>
-                          {p.notes && <span style={{ color: '#64748b', fontSize: '0.75rem', fontStyle: 'italic' }}>{p.notes}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                                <div style={{
+                                  minWidth: '230px',
+                                  flex: '1 1 230px',
+                                  background: '#ffffff',
+                                  borderRadius: '12px',
+                                  borderLeft: r.can_extend_days && r.prolongation_days > 0 ? '4px solid #f59e0b' : '4px solid #cbd5e1',
+                                  boxShadow: '0 1px 4px rgba(15, 23, 42, 0.06)',
+                                  padding: '14px 16px'
+                                }}>
+                                  <div style={{
+                                    display: 'flex', alignItems: 'center', gap: '6px',
+                                    fontWeight: 700, fontSize: '0.75rem', color: '#b45309',
+                                    marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.04em'
+                                  }}>
+                                    <Tag size={14} /> Prolongation
+                                  </div>
+                                  {r.can_extend_days && r.prolongation_days > 0 ? (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.85rem' }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+                                        <span style={{ color: '#64748b' }}>Jours ajoutés</span>
+                                        <span style={{
+                                          fontWeight: 700, color: '#b45309',
+                                          background: '#fffbeb', padding: '1px 8px', borderRadius: '10px'
+                                        }}>+{r.prolongation_days} jours</span>
+                                      </div>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+                                        <span style={{ color: '#64748b' }}>Ajoutée le</span>
+                                        <span style={{ fontWeight: 600, color: '#0f172a' }}>
+                                          {r.updated_at ? new Date(r.updated_at).toLocaleDateString("fr-FR") : "—"}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>Aucune prolongation</span>
+                                  )}
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })
                 )}
-
-                {/* Prolongation */}
-                <div style={{
-                  minWidth: '230px',
-                  flex: '1 1 230px',
-                  background: '#ffffff',
-                  borderRadius: '12px',
-                  borderLeft: r.can_extend_days && r.prolongation_days > 0 ? '4px solid #f59e0b' : '4px solid #cbd5e1',
-                  boxShadow: '0 1px 4px rgba(15, 23, 42, 0.06)',
-                  padding: '14px 16px'
-                }}>
-                  <div style={{
-                    display: 'flex', alignItems: 'center', gap: '6px',
-                    fontWeight: 700, fontSize: '0.75rem', color: '#b45309',
-                    marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.04em'
-                  }}>
-                    <Tag size={14} /> Prolongation
-                  </div>
-                  {r.can_extend_days && r.prolongation_days > 0 ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.85rem' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
-                        <span style={{ color: '#64748b' }}>Jours ajoutés</span>
-                        <span style={{
-                          fontWeight: 700, color: '#b45309',
-                          background: '#fffbeb', padding: '1px 8px', borderRadius: '10px'
-                        }}>+{r.prolongation_days} jours</span>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
-                        <span style={{ color: '#64748b' }}>Ajoutée le</span>
-                        <span style={{ fontWeight: 600, color: '#0f172a' }}>
-                          {r.updated_at ? new Date(r.updated_at).toLocaleDateString("fr-FR") : "—"}
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                    <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>Aucune prolongation</span>
-                  )}
-                </div>
-              </div>
-            </td>
-          </tr>
-        )}
-        </Fragment>
-      );
-    })
-  )}
-</tbody>
+              </tbody>
             </table>
 
             {totalPages > 1 && (
@@ -3567,71 +3614,6 @@ export default function AdminReservations() {
                 totalItems={filteredReservations.length}
               />
             )}
-          </div>
-        </div>
-      )}
-
-      {/* Details Modal */}
-      {details && (
-        <div className="modal-glass-container" style={{ maxWidth: '600px', margin: '1rem auto' }}>
-          <div className="modal-header-hero info-hero">
-            <div className="hero-left">
-              <div className="hero-icon-wrapper info-glow"><Eye size={24} /></div>
-              <div className="hero-text">
-                <span className="hero-badge info-badge">Détails</span>
-                <h2>Réservation #{details.id}</h2>
-              </div>
-            </div>
-            <button onClick={() => setDetails(null)} className="hero-close-btn"><X size={20} /></button>
-          </div>
-          <div className="modal-body-details">
-            {(() => {
-              const client = clients.find(c => c.id === details.client_id);
-              const car = cars.find(c => c.id === details.car_id);
-              const mat = matricules.find(m => m.id === details.matricule_id);
-              const secondDriver = clients.find(c => c.id === details.second_driver_client_id);
-              let paymentHistory = details.payment_history;
-              if (typeof paymentHistory === 'string') {
-                try { paymentHistory = JSON.parse(paymentHistory); } catch (e) { paymentHistory = []; }
-              }
-              if (!Array.isArray(paymentHistory)) paymentHistory = [];
-
-              return (
-                <div className="details-grid">
-                  <div className="details-row"><span className="details-label"><User size={14} /> Client</span><span className="details-value">{client ? `${client.prenom} ${client.nom}` : "—"}</span></div>
-                  {client && (<><div className="details-row"><span className="details-label"><Mail size={14} /> Email</span><span>{client.email || "—"}</span></div><div className="details-row"><span className="details-label"><Phone size={14} /> Téléphone</span><span>{client.telephone || "—"}</span></div><div className="details-row"><span className="details-label"><MapPin size={14} /> Ville</span><span>{client.city || "—"}</span></div><div className="details-row"><span className="details-label"><IdCard size={14} /> CIN</span><span>{client.cin_number || "—"}</span></div></>)}
-                  {details.has_second_driver && secondDriver && (<><div className="details-row"><span className="details-label"><Users size={14} /> 2ème Conducteur</span><span>{secondDriver.prenom} {secondDriver.nom}</span></div><div className="details-row"><span className="details-label"><Phone size={14} /> Tél. conducteur</span><span>{secondDriver.telephone || "—"}</span></div></>)}
-                  <div className="details-row"><span className="details-label"><Car size={14} /> Véhicule</span><span>{car ? `${car.brand} ${car.model}` : "—"}</span></div>
-                  <div className="details-row"><span className="details-label"><IdCard size={14} /> Immatriculation</span><span className="font-mono">{mat?.matricule_code || "—"}</span></div>
-                  <div className="details-row"><span className="details-label"><Gauge size={14} /> Km départ</span><span>{details.kilometrage_sortie || "—"} km</span></div>
-                  {details.status === "completed" && (<div className="details-row"><span className="details-label"><Gauge size={14} /> Km retour</span><span>{details.kilometrage_entree || "—"} km</span></div>)}
-                  <div className="details-row"><span className="details-label"><Calendar size={14} /> Période</span><span>{new Date(details.start_date).toLocaleDateString("fr-FR")} → {new Date(details.end_date).toLocaleDateString("fr-FR")}</span></div>
-                  <div className="details-row"><span className="details-label"><Clock size={14} /> Heures</span><span>{details.start_time || "08:00"} → {details.end_time || "18:00"}</span></div>
-                  <div className="details-row"><span className="details-label"><CalendarDays size={14} /> Jours</span><span>{calculateDays(details.start_date, details.end_date)}</span></div>
-                  <div className="details-row"><span className="details-label"><DollarSign size={14} /> Total</span><span className="details-value">{details.total_price} DH</span></div>
-                  <div className="details-row"><span className="details-label"><DollarSign size={14} /> Payé</span><span>{details.amount_paid} DH</span></div>
-                  <div className="details-row"><span className="details-label"><DollarSign size={14} /> Restant</span><span>{details.remaining_amount} DH</span></div>
-                  <div className="details-row"><span className="details-label"><Info size={14} /> Statut</span><span>{getStatusBadge(details.status)}</span></div>
-                  <div className="details-row"><span className="details-label"><Tag size={14} /> Prolongation</span><span>{details.can_extend_days ? "✅ Oui" : "—"}</span></div>
-                  <div className="details-row"><span className="details-label"><Tag size={14} /> Sous‑location</span><span>{details.sous_location?.name || "—"}</span></div>
-                  {details.notes && (<div className="details-row"><span className="details-label"><Info size={14} /> Notes</span><span>{details.notes}</span></div>)}
-                  {paymentHistory.length > 0 && (
-                    <div className="details-row">
-                      <span className="details-label"><Receipt size={14} /> Paiements</span>
-                      <div>
-                        {paymentHistory.map((p, idx) => (
-                          <div key={idx} className="payment-item-detail">
-                            {new Date(p.date).toLocaleDateString("fr-FR")}: {p.amount} DH ({p.method})
-                            {p.notes && ` - ${p.notes}`}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-            <div className="modal-footer-actions"><button onClick={() => setDetails(null)} className="btn btn-secondary">Fermer</button></div>
           </div>
         </div>
       )}
@@ -3676,7 +3658,7 @@ export default function AdminReservations() {
       {showCompleteModal && renderCompleteModal()}
 
       {/* ===== REDESIGNED STYLES ===== */}
-    <style>{`
+      <style>{`
   /* Root container layout */
   .admin-smaiti-page {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -3954,7 +3936,6 @@ export default function AdminReservations() {
   .dropdown-title { font-size: 0.8rem; color: #0f172a; }
   .dropdown-sub { font-size: 0.7rem; color: #64748b; margin-top: 2px; }
 
-  /* ======== NOUVEAU DESIGN : BANDEAU ACCENTUÉ ======== */
   .selected-info-block {
     display: flex;
     align-items: center;
@@ -4119,50 +4100,50 @@ export default function AdminReservations() {
   .color-text { color: #475569; font-weight: 400; font-family: system-ui, sans-serif; }
 
   /* Period Cell */
-        .period-cell {
-          display: flex;
-          flex-direction: column;
-          gap: 2px;
-          background: #f1f5f9;
-          padding: 4px 12px;
-          border-radius: 8px;
-          min-width: 120px;
-        }
-        .period-line {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          font-size: 0.75rem;
-          color: #1e293b;
-        }
-        .period-icon {
-          color: #64748b;
-        }
-        .period-arrow {
-          color: #0f172a;
-          font-weight: 500;
-        }
-        .arrow-icon {
-          margin-left: 16px;
-          margin-right: 4px;
-          color: #94a3b8;
-        }
-        /* Days Badge */
-        .days-badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          background: #dbeafe;
-          color: #1e40af;
-          padding: 4px 12px;
-          border-radius: 20px;
-          font-weight: 600;
-          font-size: 0.75rem;
-          border: 1px solid #60a5fa;
-        }
-        .days-icon {
-          color: #2563eb;
-        }
+  .period-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: #f1f5f9;
+    padding: 4px 12px;
+    border-radius: 8px;
+    min-width: 120px;
+  }
+  .period-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    color: #1e293b;
+  }
+  .period-icon {
+    color: #64748b;
+  }
+  .period-arrow {
+    color: #0f172a;
+    font-weight: 500;
+  }
+  .arrow-icon {
+    margin-left: 16px;
+    margin-right: 4px;
+    color: #94a3b8;
+  }
+  /* Days Badge */
+  .days-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #dbeafe;
+    color: #1e40af;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-weight: 600;
+    font-size: 0.75rem;
+    border: 1px solid #60a5fa;
+  }
+  .days-icon {
+    color: #2563eb;
+  }
   /* Days remaining */
   .days-remaining-cell { font-size: 0.75rem; font-weight: 500; }
   .days-remaining-cell.late { color: #dc2626; font-weight: 600; }

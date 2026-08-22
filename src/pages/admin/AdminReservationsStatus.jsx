@@ -1101,7 +1101,7 @@ const SousLocationSearch = ({ sousLocations, selectedId, onSelect, onCreateNew, 
 
 // ==================== ReservationForm ====================
 const ReservationForm = ({
-  isOpen, onClose, onSubmit, editingReservation, clients, cars, matricules, submitting,onSubmitAndNavigate   
+  isOpen, onClose, onSubmit, editingReservation, clients, cars, matricules, submitting, onSubmitAndNavigate
 }) => {
   const dispatch = useDispatch();
   const user = useSelector(selectUser);
@@ -1114,12 +1114,17 @@ const ReservationForm = ({
 
   const sousLocations = useSelector(selectSousLocations);
 
+  // États principaux
+  const [baseDays, setBaseDays] = useState(1);           // jours de base (affichés dans "Nombre de jours")
+  const [prolongationDays, setProlongationDays] = useState(0); // jours supplémentaires
+  const [totalDays, setTotalDays] = useState(1);        // baseDays + prolongationDays (utilisé pour le calcul)
+  const [dailyRate, setDailyRate] = useState(0);
+
   const [formData, setFormData] = useState({
     start_date: new Date().toISOString().split("T")[0],
     end_date: "",
     start_time: "08:00",
     end_time: "18:00",
-    rental_days: 1,
     total_price: 0,
     amount_paid: 0,
     remaining_amount: 0,
@@ -1137,6 +1142,7 @@ const ReservationForm = ({
     can_extend_days: false,
   });
 
+  // Autres états (recherches, paiements, etc.)
   const [clientSearch, setClientSearch] = useState("");
   const [isNewClient, setIsNewClient] = useState(false);
   const [carMatricules, setCarMatricules] = useState([]);
@@ -1161,20 +1167,23 @@ const ReservationForm = ({
   const [newSousLocationName, setNewSousLocationName] = useState('');
   const [newSousLocationDesc, setNewSousLocationDesc] = useState('');
 
-  // NEW STATES FOR DROPDOWN VISIBILITY
   const [isClientDropdownOpen, setIsClientDropdownOpen] = useState(false);
   const [isMatriculeDropdownOpen, setIsMatriculeDropdownOpen] = useState(false);
 
+  // ---------- REF TO BREAK INFINITE LOOP ----------
+  const isUpdatingFromRate = useRef(false);
+
+  // ------- FILTRES -------
   const filteredClients = useMemo(() => {
     if (!clientSearch.trim() || isNewClient || !clients || !Array.isArray(clients)) return [];
-    const searchTerm = clientSearch.toLowerCase().trim();
+    const term = clientSearch.toLowerCase().trim();
     return clients
       .filter(client => {
         if (!client || typeof client !== "object") return false;
         const fullName = `${client.prenom || ""} ${client.nom || ""}`.toLowerCase();
         const email = (client.email || "").toLowerCase();
         const telephone = (client.telephone || "").toLowerCase();
-        return fullName.includes(searchTerm) || email.includes(searchTerm) || telephone.includes(searchTerm);
+        return fullName.includes(term) || email.includes(term) || telephone.includes(term);
       })
       .slice(0, 10);
   }, [clientSearch, isNewClient, clients]);
@@ -1184,18 +1193,18 @@ const ReservationForm = ({
       setFilteredMatricules([]);
       return;
     }
-    const searchTerm = matriculeSearch.toLowerCase().trim();
+    const term = matriculeSearch.toLowerCase().trim();
     const filtered = matricules
       .filter(mat => {
         if (!mat || typeof mat !== "object") return false;
         if (mat.status === 'sold') return false;
-        const matriculeCode = (mat.matricule_code || "").toLowerCase();
-        return matriculeCode.includes(searchTerm);
+        return (mat.matricule_code || "").toLowerCase().includes(term);
       })
       .slice(0, 10);
     setFilteredMatricules(filtered);
   }, [matriculeSearch, matricules]);
 
+  // ------- CHARGEMENT EN ÉDITION -------
   useEffect(() => {
     if (editingReservation) {
       const computeRentalDays = (start, end) => {
@@ -1204,20 +1213,26 @@ const ReservationForm = ({
         const endDate = new Date(end);
         startDate.setHours(0,0,0,0);
         endDate.setHours(0,0,0,0);
-        const diffTime = Math.abs(endDate - startDate);
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        return diffDays === 0 ? 1 : diffDays;
+        const diff = Math.ceil((endDate - startDate) / (1000*60*60*24));
+        return diff === 0 ? 1 : diff;
       };
+
+      const total = editingReservation.rental_days || editingReservation.total_days ||
+                   (editingReservation.start_date && editingReservation.end_date
+                     ? computeRentalDays(editingReservation.start_date, editingReservation.end_date)
+                     : 1);
+      const prolong = editingReservation.prolongation_days || 0;
+      const base = total - prolong;
+
+      setBaseDays(base > 0 ? base : 1);
+      setProlongationDays(prolong);
+      setTotalDays(total);
 
       setFormData({
         start_date: editingReservation.start_date?.split("T")[0] || "",
         end_date: editingReservation.end_date?.split("T")[0] || "",
         start_time: editingReservation.start_time || "08:00",
         end_time: editingReservation.end_time || "18:00",
-        rental_days: editingReservation.rental_days || editingReservation.total_days || 
-                     (editingReservation.start_date && editingReservation.end_date 
-                       ? computeRentalDays(editingReservation.start_date, editingReservation.end_date) 
-                       : 1),
         total_price: editingReservation.total_price || 0,
         amount_paid: editingReservation.amount_paid || 0,
         remaining_amount: editingReservation.remaining_amount || 0,
@@ -1239,6 +1254,9 @@ const ReservationForm = ({
           ? editingReservation.payment_history
           : []
       );
+      if (editingReservation.total_price && total > 0) {
+        setDailyRate(editingReservation.total_price / total);
+      }
       if (editingReservation.client_id) {
         const client = clients.find(c => c.id === editingReservation.client_id);
         if (client) {
@@ -1247,66 +1265,103 @@ const ReservationForm = ({
         }
       }
       if (editingReservation.matricule_id) {
-        const matricule = matricules.find(m => m.id === editingReservation.matricule_id);
-        if (matricule) {
-          setSelectedMatricule(matricule);
-          setMatriculeSearch(matricule.matricule_code);
-          if (matricule.car_id) {
-            setFormData(prev => ({ ...prev, car_id: matricule.car_id }));
+        const mat = matricules.find(m => m.id === editingReservation.matricule_id);
+        if (mat) {
+          setSelectedMatricule(mat);
+          setMatriculeSearch(mat.matricule_code);
+          if (mat.car_id) {
+            setFormData(prev => ({ ...prev, car_id: mat.car_id }));
           }
         }
       }
     }
   }, [editingReservation, clients, matricules]);
 
+  // ------- MATRICULES PAR VOITURE -------
   useEffect(() => {
     if (formData.car_id) {
-      const filtered = matricules.filter(m => m.car_id == formData.car_id);
-      setCarMatricules(filtered);
+      setCarMatricules(matricules.filter(m => m.car_id == formData.car_id));
     } else {
       setCarMatricules([]);
     }
   }, [formData.car_id, matricules]);
 
+  // ------- KILOMÉTRAGE SORTIE AUTO -------
   useEffect(() => {
     if (formData.matricule_id) {
-      const selectedMatriculeObj = matricules.find(m => m.id == formData.matricule_id);
-      if (selectedMatriculeObj && (!formData.kilometrage_sortie || formData.kilometrage_sortie === "")) {
-        setFormData(prev => ({ ...prev, kilometrage_sortie: selectedMatriculeObj.kilometrage }));
+      const mat = matricules.find(m => m.id == formData.matricule_id);
+      if (mat && (!formData.kilometrage_sortie || formData.kilometrage_sortie === "")) {
+        setFormData(prev => ({ ...prev, kilometrage_sortie: mat.kilometrage }));
       }
     }
   }, [formData.matricule_id, matricules]);
 
+  // ------- SOUS-LOCATIONS -------
   useEffect(() => {
-    if (!editingReservation && formData.car_id && formData.rental_days) {
-      const car = cars.find(c => c.id == formData.car_id);
-      if (car) {
-        const total = car.price_per_day * formData.rental_days;
-        setFormData(prev => ({ ...prev, total_price: total }));
-      }
-    }
-  }, [formData.car_id, formData.rental_days, cars, editingReservation]);
-
-  useEffect(() => {
-    const total = parseFloat(formData.total_price) || 0;
-    const paid = parseFloat(formData.amount_paid) || 0;
-    const remaining = Math.max(total - paid, 0);
-    setFormData(prev => ({ ...prev, remaining_amount: remaining }));
-  }, [formData.total_price, formData.amount_paid]);
-
-
-  useEffect(() => {
-    if (isOpen) {
-      dispatch(fetchSousLocations());
-    }
+    if (isOpen) dispatch(fetchSousLocations());
   }, [isOpen, dispatch]);
 
+  // ========== LOGIQUE dailyRate & totalDays ==========
+  // Mise à jour du totalDays chaque fois que baseDays ou prolongationDays change
+  useEffect(() => {
+    const newTotal = baseDays + prolongationDays;
+    setTotalDays(newTotal);
+    // Recalculer le prix total avec le dailyRate actuel
+    if (dailyRate > 0) {
+      // Mark that we are updating total_price from dailyRate
+      isUpdatingFromRate.current = true;
+      setFormData(prev => ({ ...prev, total_price: dailyRate * newTotal }));
+    }
+    // Mettre à jour la date de fin
+    if (formData.start_date) {
+      const start = new Date(formData.start_date);
+      const end = new Date(start);
+      end.setDate(start.getDate() + newTotal);
+      setFormData(prev => ({ ...prev, end_date: end.toISOString().split('T')[0] }));
+    }
+  }, [baseDays, prolongationDays, dailyRate, formData.start_date]);
+
+  // Reset the flag after total_price has been updated from dailyRate
+  useEffect(() => {
+    if (isUpdatingFromRate.current) {
+      const timer = setTimeout(() => {
+        isUpdatingFromRate.current = false;
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [formData.total_price]);
+
+  // 1) Quand le véhicule change → on récupère le prix et on met à jour dailyRate
+  useEffect(() => {
+    if (!editingReservation && formData.car_id) {
+      const car = cars.find(c => c.id == formData.car_id);
+      if (car) {
+        const rate = car.price_per_day || 0;
+        setDailyRate(rate);
+        // Le prix total sera recalculé par l'effet ci-dessus (qui dépend de dailyRate)
+      }
+    }
+  }, [formData.car_id, cars, editingReservation]);
+
+  // 2) Quand l'utilisateur modifie le total manuellement → on recalcule dailyRate
+  // BUT only if the update did NOT come from the other effect (isUpdatingFromRate)
+  useEffect(() => {
+    // Skip if we are currently updating total_price from dailyRate
+    if (isUpdatingFromRate.current) return;
+    
+    if (totalDays > 0 && formData.total_price > 0) {
+      const rate = formData.total_price / totalDays;
+      setDailyRate(rate);
+    }
+  }, [formData.total_price, totalDays]);
+
+  // ========== GESTIONNAIRES ==========
   const handleStartDateChange = (value) => {
     setFormData(prev => ({ ...prev, start_date: value }));
-    if (value && formData.rental_days) {
+    if (value && totalDays) {
       const start = new Date(value);
       const end = new Date(start);
-      end.setDate(start.getDate() + formData.rental_days);
+      end.setDate(start.getDate() + totalDays);
       setFormData(prev => ({ ...prev, end_date: end.toISOString().split("T")[0] }));
     }
   };
@@ -1316,29 +1371,61 @@ const ReservationForm = ({
     if (formData.start_date && value) {
       const start = new Date(formData.start_date);
       const end = new Date(value);
-      const diffTime = Math.abs(end - start);
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      setFormData(prev => ({ ...prev, rental_days: diffDays === 0 ? 1 : diffDays }));
+      const diff = Math.ceil((end - start) / (1000*60*60*24));
+      const days = diff === 0 ? 1 : diff;
+      // On ajuste baseDays et prolongationDays
+      const newBase = days - prolongationDays;
+      setBaseDays(newBase > 0 ? newBase : 1);
     }
   };
 
-  const handleRentalDaysChange = (value) => {
+  // Modification du champ "Nombre de jours" (base)
+  const handleBaseDaysChange = (value) => {
     if (value === '') {
-      setFormData(prev => ({ ...prev, rental_days: null }));
+      setBaseDays(null);
       return;
     }
     const days = parseInt(value, 10);
     if (!isNaN(days) && days >= 1) {
-      setFormData(prev => ({ ...prev, rental_days: days }));
-      if (formData.start_date) {
-        const start = new Date(formData.start_date);
-        const end = new Date(start);
-        end.setDate(start.getDate() + days);
-        setFormData(prev => ({ ...prev, end_date: end.toISOString().split('T')[0] }));
+      setBaseDays(days);
+    }
+  };
+
+  // Prolongation : activation/désactivation
+  const handleProlongationToggle = (checked) => {
+    setFormData(prev => ({ ...prev, can_extend_days: checked }));
+    if (!checked) {
+      // On désactive : on remet prolongationDays à 0
+      setProlongationDays(0);
+    } else {
+      // On active : on met 1 jour par défaut si prolongationDays est 0
+      if (prolongationDays === 0) {
+        setProlongationDays(1);
       }
     }
   };
 
+  // Modification du champ "Jours à ajouter"
+  const handleProlongationDaysChange = (value) => {
+    const val = parseInt(value, 10);
+    if (!isNaN(val) && val >= 0) {
+      setProlongationDays(val);
+    }
+  };
+
+  // Recalculer manuellement (bouton)
+  const handleRecalculateTotal = () => {
+    const car = cars.find(c => c.id == formData.car_id);
+    if (!car) {
+      toast.warning("Sélectionnez un véhicule d'abord.");
+      return;
+    }
+    const rate = car.price_per_day || 0;
+    setDailyRate(rate);
+    // Le total sera recalculé par l'effet sur totalDays
+  };
+
+  // ------- CLIENTS -------
   const handleClientSelect = (client) => {
     setSelectedClient(client);
     setIsNewClient(false);
@@ -1361,7 +1448,7 @@ const ReservationForm = ({
 
   const handleSaveNewClient = async () => {
     if (!newClientData.prenom || !newClientData.nom || !newClientData.telephone) {
-      toast.error("Veuillez remplir les champs obligatoires du client (Prénom, Nom, Téléphone)");
+      toast.error("Veuillez remplir les champs obligatoires (Prénom, Nom, Téléphone)");
       return;
     }
     setCreatingClient(true);
@@ -1383,6 +1470,14 @@ const ReservationForm = ({
     }
   };
 
+  const clearClientSelection = () => {
+    setSelectedClient(null);
+    setClientSearch('');
+    setFormData(prev => ({ ...prev, client_id: '' }));
+    setIsClientDropdownOpen(false);
+  };
+
+  // ------- MATRICULES -------
   const handleMatriculeSelect = (matricule) => {
     setSelectedMatricule(matricule);
     setMatriculeSearch(matricule.matricule_code);
@@ -1392,114 +1487,10 @@ const ReservationForm = ({
       car_id: matricule.car_id,
       kilometrage_sortie: matricule.kilometrage || ""
     }));
-    const associatedCar = cars.find(c => c.id == matricule.car_id);
-    if (associatedCar) {
-      toast.success(`Véhicule sélectionné: ${associatedCar.brand} ${associatedCar.model}`);
-    }
+    const car = cars.find(c => c.id == matricule.car_id);
+    if (car) toast.success(`Véhicule: ${car.brand} ${car.model}`);
     setFilteredMatricules([]);
     setIsMatriculeDropdownOpen(false);
-  };
-
-  const handleAddPayment = () => {
-    if (!newPayment.amount || parseFloat(newPayment.amount) <= 0) {
-      toast.error("Veuillez entrer un montant valide");
-      return;
-    }
-    const amount = parseFloat(newPayment.amount);
-    const currentTotalPaid = paymentHistory.reduce((sum, p) => sum + p.amount, 0);
-    const maxPossible = (formData.total_price || 0) - currentTotalPaid;
-
-    if (maxPossible <= 0) {
-      toast.error("Cette réservation est déjà entièrement payée.");
-      return;
-    }
-
-    let actualAmount = amount;
-    if (actualAmount > maxPossible) {
-      actualAmount = maxPossible;
-      toast.info(`Le paiement a été ajusté à ${actualAmount} DH (reste à payer).`);
-    }
-
-    const payment = {
-      id: `payment_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      amount: actualAmount,
-      date: newPayment.date,
-      method: newPayment.method,
-      notes: newPayment.notes || "",
-      created_at: new Date().toISOString()
-    };
-
-    const updatedHistory = [...paymentHistory, payment];
-    setPaymentHistory(updatedHistory);
-    const newAmountPaid = updatedHistory.reduce((sum, p) => sum + p.amount, 0);
-    const newRemaining = (formData.total_price || 0) - newAmountPaid;
-
-    setFormData(prev => ({
-      ...prev,
-      amount_paid: newAmountPaid,
-      remaining_amount: newRemaining
-    }));
-
-    setNewPayment({ amount: "", date: new Date().toISOString().split("T")[0], method: "cash", notes: "" });
-    setShowAddPayment(false);
-    toast.success("Paiement ajouté");
-  };
-
-  const handleRemovePayment = (paymentId) => {
-    const updatedHistory = paymentHistory.filter(p => p.id !== paymentId);
-    setPaymentHistory(updatedHistory);
-    const newAmountPaid = updatedHistory.reduce((sum, p) => sum + p.amount, 0);
-    const newRemaining = (formData.total_price || 0) - newAmountPaid;
-    setFormData(prev => ({
-      ...prev,
-      amount_paid: newAmountPaid,
-      remaining_amount: newRemaining
-    }));
-    toast.success("Paiement supprimé");
-  };
-
-  // ===== VALIDATION HELPER =====
-const getValidatedData = () => {
-  let clientId = formData.client_id;
-  if (isNewClient && !clientId) {
-    toast.error("Veuillez confirmer la création du client en cliquant sur 'Confirmer la création'");
-    return null;
-  }
-  if (!clientId) {
-    toast.error("Veuillez sélectionner ou créer un client");
-    return null;
-  }
-  const reservationData = {
-    ...formData,
-    client_id: clientId,
-    payment_history: paymentHistory
-  };
-  return reservationData;
-};
-
-const handleSubmit = async (e) => {
-  e.preventDefault();
-  const data = getValidatedData();
-  if (!data) return;
-  onSubmit(data);
-};
-
-const handleSubmitAndNavigate = () => {
-  const data = getValidatedData();
-  if (!data) return;
-  if (onSubmitAndNavigate) {
-    onSubmitAndNavigate(data);
-  } else {
-    onSubmit(data);
-  }
-};
-
-  // === NEW CLEAR FUNCTIONS ===
-  const clearClientSelection = () => {
-    setSelectedClient(null);
-    setClientSearch('');
-    setFormData(prev => ({ ...prev, client_id: '' }));
-    setIsClientDropdownOpen(false);
   };
 
   const clearMatriculeSelection = () => {
@@ -1509,8 +1500,94 @@ const handleSubmitAndNavigate = () => {
     setIsMatriculeDropdownOpen(false);
   };
 
+  // ------- PAIEMENTS -------
+  const handleAddPayment = () => {
+    if (!newPayment.amount || parseFloat(newPayment.amount) <= 0) {
+      toast.error("Montant invalide");
+      return;
+    }
+    const amount = parseFloat(newPayment.amount);
+    const currentTotalPaid = paymentHistory.reduce((sum, p) => sum + p.amount, 0);
+    const maxPossible = (formData.total_price || 0) - currentTotalPaid;
+    if (maxPossible <= 0) {
+      toast.error("Réservation déjà entièrement payée.");
+      return;
+    }
+    let actualAmount = amount;
+    if (actualAmount > maxPossible) {
+      actualAmount = maxPossible;
+      toast.info(`Ajusté à ${actualAmount} DH (reste à payer).`);
+    }
+    const payment = {
+      id: `payment_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      amount: actualAmount,
+      date: newPayment.date,
+      method: newPayment.method,
+      notes: newPayment.notes || "",
+      created_at: new Date().toISOString()
+    };
+    const updated = [...paymentHistory, payment];
+    setPaymentHistory(updated);
+    const newPaid = updated.reduce((s, p) => s + p.amount, 0);
+    setFormData(prev => ({
+      ...prev,
+      amount_paid: newPaid,
+      remaining_amount: (prev.total_price || 0) - newPaid
+    }));
+    setNewPayment({ amount: "", date: new Date().toISOString().split("T")[0], method: "cash", notes: "" });
+    setShowAddPayment(false);
+    toast.success("Paiement ajouté");
+  };
+
+  const handleRemovePayment = (paymentId) => {
+    const updated = paymentHistory.filter(p => p.id !== paymentId);
+    setPaymentHistory(updated);
+    const newPaid = updated.reduce((s, p) => s + p.amount, 0);
+    setFormData(prev => ({
+      ...prev,
+      amount_paid: newPaid,
+      remaining_amount: (prev.total_price || 0) - newPaid
+    }));
+    toast.success("Paiement supprimé");
+  };
+
+  // ------- SOUMISSION -------
+  const getValidatedData = () => {
+    let clientId = formData.client_id;
+    if (isNewClient && !clientId) {
+      toast.error("Veuillez confirmer la création du client.");
+      return null;
+    }
+    if (!clientId) {
+      toast.error("Veuillez sélectionner ou créer un client");
+      return null;
+    }
+    return {
+      ...formData,
+      client_id: clientId,
+      payment_history: paymentHistory,
+      rental_days: totalDays,
+      prolongation_days: prolongationDays,
+    };
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const data = getValidatedData();
+    if (!data) return;
+    onSubmit(data);
+  };
+
+  const handleSubmitAndNavigate = () => {
+    const data = getValidatedData();
+    if (!data) return;
+    if (onSubmitAndNavigate) onSubmitAndNavigate(data);
+    else onSubmit(data);
+  };
+
   if (!isOpen) return null;
 
+  // ========== RENDU ==========
   return (
     <div className="modal-glass-container">
       <div className="modal-header-hero primary-hero">
@@ -1530,6 +1607,7 @@ const handleSubmitAndNavigate = () => {
       <form onSubmit={handleSubmit} className="modal-body-form">
         <div className="modal-grid-2">
           <div className="form-column">
+            {/* ---------- CLIENT ---------- */}
             <div className="form-card">
               <div className="card-header">
                 <User size={16} className="text-emerald" />
@@ -1537,7 +1615,6 @@ const handleSubmitAndNavigate = () => {
               </div>
               {!isNewClient ? (
                 <>
-                  {/* MODIFIED CLIENT SEARCH */}
                   <div className="field-block relative-block" style={{ marginBottom: '12px' }}>
                     <label>Rechercher un client</label>
                     <div className="input-with-icon">
@@ -1612,6 +1689,7 @@ const handleSubmitAndNavigate = () => {
               )}
             </div>
 
+            {/* ---------- DEUXIÈME CONDUCTEUR ---------- */}
             <div className="form-card">
               <div className="card-header">
                 <Users size={16} className="text-emerald" />
@@ -1637,8 +1715,8 @@ const handleSubmitAndNavigate = () => {
                     <strong>Deuxième conducteur sélectionné</strong>
                     <p>
                       {(() => {
-                        const secondDriver = clients.find(c => c.id === parseInt(formData.second_driver_client_id));
-                        return secondDriver ? `${secondDriver.prenom} ${secondDriver.nom} - ${secondDriver.telephone}` : "—";
+                        const sd = clients.find(c => c.id === parseInt(formData.second_driver_client_id));
+                        return sd ? `${sd.prenom} ${sd.nom} - ${sd.telephone}` : "—";
                       })()}
                     </p>
                   </div>
@@ -1646,6 +1724,7 @@ const handleSubmitAndNavigate = () => {
               )}
             </div>
 
+            {/* ---------- DATES ET DURÉE ---------- */}
             <div className="form-card">
               <div className="card-header">
                 <Calendar size={16} className="text-emerald" />
@@ -1659,8 +1738,13 @@ const handleSubmitAndNavigate = () => {
                 <div className="field-block"><label>Date de fin *</label><input type="date" className="styled-input" value={formData.end_date} onChange={(e) => handleEndDateChange(e.target.value)} required /></div>
                 <div className="field-block"><label>Heure de fin</label><input type="time" className="styled-input" value={formData.end_time} onChange={(e) => setFormData(prev => ({ ...prev, end_time: e.target.value }))} /></div>
               </div>
-<div className="field-block"><label>Nombre de jours</label><input type="number" className="styled-input" value={formData.rental_days ?? ''} onChange={(e) => handleRentalDaysChange(e.target.value)} min="1" /></div>     </div>
+              <div className="field-block">
+                <label>Nombre de jours</label>
+                <input type="number" className="styled-input" value={baseDays ?? ''} onChange={(e) => handleBaseDaysChange(e.target.value)} min="1" />
+              </div>
+            </div>
 
+            {/* ---------- SOUS-LOCATION & PROLONGATION ---------- */}
             <div className="form-card">
               <div className="card-header">
                 <Tag size={16} className="text-emerald" />
@@ -1679,15 +1763,30 @@ const handleSubmitAndNavigate = () => {
                 </div>
                 <div className="field-block">
                   <label>Prolongation autorisée</label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.25rem' }}>
-                    <input
-                      type="checkbox"
-                      checked={formData.can_extend_days || false}
-                      onChange={(e) => setFormData({ ...formData, can_extend_days: e.target.checked })}
-                    />
-                    <span style={{ fontSize: '0.8rem', color: '#475569' }}>
-                      Le client pourra prolonger la location
-                    </span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.25rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={formData.can_extend_days || false}
+                        onChange={(e) => handleProlongationToggle(e.target.checked)}
+                      />
+                      <span style={{ fontSize: '0.8rem', color: '#475569' }}>
+                        Le client pourra prolonger la location
+                      </span>
+                    </div>
+                    {formData.can_extend_days && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <label style={{ fontSize: '0.8rem', fontWeight: 500, color: '#475569' }}>Jours à ajouter :</label>
+                        <input
+                          type="number"
+                          className="styled-input"
+                          style={{ width: '80px', padding: '0.25rem 0.5rem' }}
+                          value={prolongationDays}
+                          onChange={(e) => handleProlongationDaysChange(e.target.value)}
+                          min="0"
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1695,12 +1794,12 @@ const handleSubmitAndNavigate = () => {
           </div>
 
           <div className="form-column">
+            {/* ---------- VÉHICULE ---------- */}
             <div className="form-card">
               <div className="card-header">
                 <Car size={16} className="text-emerald" />
                 <h4>Véhicule</h4>
               </div>
-              {/* MODIFIED MATRICULE SEARCH */}
               <div className="field-block relative-block" style={{ marginBottom: '12px' }}>
                 <label>Rechercher par immatriculation</label>
                 <div className="input-with-icon">
@@ -1718,38 +1817,38 @@ const handleSubmitAndNavigate = () => {
                   />
                 </div>
                 {isMatriculeDropdownOpen && filteredMatricules.length > 0 && (
-  <div className="styled-dropdown">
-    {filteredMatricules.map(mat => {
-      const carForMat = cars.find(c => c.id == mat.car_id);
-      const isSold = mat.status === 'sold';
-      return (
-        <div key={mat.id} className="dropdown-item" onClick={() => handleMatriculeSelect(mat)}>
-          <div className="dropdown-title">
-            <strong>{mat.matricule_code}</strong>
-            <span className={`badge ${isSold ? 'badge-danger' : 'badge-success'}`} style={{ marginLeft: '8px' }}>
-              {isSold ? 'Inactif' : 'Actif'}
-            </span>
-            {carForMat && `- ${carForMat.brand} ${carForMat.model}`}
-          </div>
-          <div className="dropdown-sub">Kilométrage: {mat.kilometrage} km • {carForMat && `${carForMat.price_per_day} DH/jour`}</div>
-        </div>
-      );
-    })}
-  </div>
-)}
+                  <div className="styled-dropdown">
+                    {filteredMatricules.map(mat => {
+                      const car = cars.find(c => c.id == mat.car_id);
+                      const isSold = mat.status === 'sold';
+                      return (
+                        <div key={mat.id} className="dropdown-item" onClick={() => handleMatriculeSelect(mat)}>
+                          <div className="dropdown-title">
+                            <strong>{mat.matricule_code}</strong>
+                            <span className={`badge ${isSold ? 'badge-danger' : 'badge-success'}`} style={{ marginLeft: '8px' }}>
+                              {isSold ? 'Inactif' : 'Actif'}
+                            </span>
+                            {car && `- ${car.brand} ${car.model}`}
+                          </div>
+                          <div className="dropdown-sub">Kilométrage: {mat.kilometrage} km • {car && `${car.price_per_day} DH/jour`}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 {selectedMatricule && (
-  <div className="selected-info-block">
-    <CheckCircle size={16} className="selected-icon" />
-    <span className="selected-label">Matricule sélectionné :</span>
-    <span className="selected-value">{selectedMatricule.matricule_code}</span>
-    <span className={`badge ${selectedMatricule.status === 'sold' ? 'badge-danger' : 'badge-success'}`}>
-      {selectedMatricule.status === 'sold' ? 'Inactif' : 'Actif'}
-    </span>
-    <button type="button" className="selected-clear" onClick={clearMatriculeSelection}>
-      <X size={14} />
-    </button>
-  </div>
-)}
+                  <div className="selected-info-block">
+                    <CheckCircle size={16} className="selected-icon" />
+                    <span className="selected-label">Matricule sélectionné :</span>
+                    <span className="selected-value">{selectedMatricule.matricule_code}</span>
+                    <span className={`badge ${selectedMatricule.status === 'sold' ? 'badge-danger' : 'badge-success'}`}>
+                      {selectedMatricule.status === 'sold' ? 'Inactif' : 'Actif'}
+                    </span>
+                    <button type="button" className="selected-clear" onClick={clearMatriculeSelection}>
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="input-group-row">
                 <div className="field-block">
@@ -1781,46 +1880,66 @@ const handleSubmitAndNavigate = () => {
               </div>
             </div>
 
+            {/* ---------- PAIEMENT ET STATUT ---------- */}
             <div className="form-card">
               <div className="card-header">
                 <DollarSign size={16} className="text-emerald" />
                 <h4>Paiement et statut</h4>
               </div>
               <div className="input-group-row">
-                <div className="field-block"><label>Prix total (DH) *</label><input type="number" step="0.01" className="styled-input" value={formData.total_price} onChange={(e) => setFormData(prev => ({ ...prev, total_price: parseFloat(e.target.value) }))} required /></div>
+                <div className="field-block">
+                  <label>Prix total (DH) *</label>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <input
+                      type="number"
+                      step="0.01"
+                      className="styled-input"
+                      value={formData.total_price}
+                      onChange={(e) => setFormData(prev => ({ ...prev, total_price: parseFloat(e.target.value) || 0 }))}
+                      required
+                      style={{ flex: 1 }}
+                    />
+                    <button
+                      type="button"
+                      className="btn-modal-secondary"
+                      onClick={handleRecalculateTotal}
+                      style={{ padding: '0.4rem 0.8rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem', whiteSpace: 'nowrap' }}
+                      disabled={!formData.car_id}
+                    >
+                      <RefreshCw size={14} /> Recalculer
+                    </button>
+                  </div>
+                </div>
                 <div className="field-block"><label>Montant payé (DH)</label><input type="number" step="0.01" className="styled-input" value={formData.amount_paid} readOnly style={{ backgroundColor: "#f3f4f6" }} /></div>
               </div>
               <div className="input-group-row">
                 <div className="field-block"><label>Reste à payer (DH)</label><input type="number" step="0.01" className="styled-input" value={formData.remaining_amount} readOnly style={{ backgroundColor: "#f3f4f6" }} /></div>
                 <div className="field-block"><label>Statut</label>
                   <select
-  className="styled-select"
-  value={formData.status}
-  onChange={(e) => {
-    const newStatus = e.target.value;
-    setFormData(prev => {
-      const updates = { status: newStatus };
-      const now = new Date();
-      const currentTime = now.toTimeString().slice(0, 5);
-      if (newStatus === 'confirmed') {
-        updates.start_time = currentTime;
-      }
-      if (newStatus === 'completed') {
-        const currentDate = now.toISOString().split('T')[0];
-        updates.end_date = currentDate;
-        updates.end_time = currentTime;
-      }
-      return { ...prev, ...updates };
-    });
-  }}
->
-  <option value="pending">En attente</option>
-  <option value="confirmed">Confirmée</option>
-  <option value="contacted">Contacté</option>
-  <option value="completed">Terminée</option>
-  <option value="retard">En retard</option>
-  <option value="cancelled">Annulée</option>
-</select>
+                    className="styled-select"
+                    value={formData.status}
+                    onChange={(e) => {
+                      const newStatus = e.target.value;
+                      setFormData(prev => {
+                        const updates = { status: newStatus };
+                        const now = new Date();
+                        const currentTime = now.toTimeString().slice(0, 5);
+                        if (newStatus === 'confirmed') updates.start_time = currentTime;
+                        if (newStatus === 'completed') {
+                          updates.end_date = now.toISOString().split('T')[0];
+                          updates.end_time = currentTime;
+                        }
+                        return { ...prev, ...updates };
+                      });
+                    }}
+                  >
+                    <option value="pending">En attente</option>
+                    <option value="confirmed">Confirmée</option>
+                    <option value="contacted">Contacté</option>
+                    <option value="completed">Terminée</option>
+                    <option value="retard">En retard</option>
+                    <option value="cancelled">Annulée</option>
+                  </select>
                 </div>
               </div>
               <div className="inline-payment-section">
@@ -1862,6 +1981,7 @@ const handleSubmitAndNavigate = () => {
               </div>
             </div>
 
+            {/* ---------- NOTES ---------- */}
             <div className="form-card">
               <div className="card-header">
                 <Info size={16} className="text-emerald" />
@@ -1874,6 +1994,7 @@ const handleSubmitAndNavigate = () => {
           </div>
         </div>
 
+        {/* ---------- MODAL SOUS-LOCATION ---------- */}
         {showCreateSousLocationModal && (
           <div className="modal-overlay" onClick={() => setShowCreateSousLocationModal(false)}>
             <div className="modal" style={{ maxWidth: '450px' }} onClick={(e) => e.stopPropagation()}>
@@ -1944,32 +2065,26 @@ const handleSubmitAndNavigate = () => {
           </div>
         )}
 
+        {/* ---------- BOUTONS ---------- */}
         <div className="modal-footer-actions">
-  <button type="button" className="btn-modal-secondary" onClick={onClose}>Annuler</button>
-  
-  {/* Standard submit */}
-  <button type="submit" className="btn-modal-primary" disabled={submitting}>
-    {submitting ? "Traitement..." : (editingReservation ? "Mettre à jour" : "Créer la réservation")}
-  </button>
-  
-  {/* New button with changed color */}
-  {onSubmitAndNavigate && (
-    <button
-      type="button"
-      className="btn-modal-primary"
-      onClick={handleSubmitAndNavigate}
-      disabled={submitting}
-      style={{
-        background: '#3b82f6',
-        transition: 'background 0.2s'
-      }}
-      onMouseEnter={(e) => e.currentTarget.style.background = '#2563eb'}
-      onMouseLeave={(e) => e.currentTarget.style.background = '#3b82f6'}
-    >
-      {submitting ? "Traitement..." : (editingReservation ? "Mettre à jour & Contrat" : "Créer & Contrat")}
-    </button>
-  )}
-</div>
+          <button type="button" className="btn-modal-secondary" onClick={onClose}>Annuler</button>
+          <button type="submit" className="btn-modal-primary" disabled={submitting}>
+            {submitting ? "Traitement..." : (editingReservation ? "Mettre à jour" : "Créer la réservation")}
+          </button>
+          {onSubmitAndNavigate && (
+            <button
+              type="button"
+              className="btn-modal-primary"
+              onClick={handleSubmitAndNavigate}
+              disabled={submitting}
+              style={{ background: '#3b82f6', transition: 'background 0.2s' }}
+              onMouseEnter={(e) => e.currentTarget.style.background = '#2563eb'}
+              onMouseLeave={(e) => e.currentTarget.style.background = '#3b82f6'}
+            >
+              {submitting ? "Traitement..." : (editingReservation ? "Mettre à jour & Contrat" : "Créer & Contrat")}
+            </button>
+          )}
+        </div>
       </form>
     </div>
   );
